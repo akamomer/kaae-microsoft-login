@@ -363,11 +363,18 @@ final class KAAE_MS_Login {
     public static function login_button(): void {
         if ( self::ready() ) {
             self::button_styles();
-            echo '<p style="margin:16px 0"><a class="kaae-ms-button" href="' . esc_url( add_query_arg( 'action', 'kaae_ms_start', site_url( 'wp-login.php', 'https' ) ) ) . '">' . self::microsoft_logo() . '<span>Sign in with Microsoft</span></a></p>';
+            echo '<p style="margin:16px 0"><a class="kaae-ms-button" href="' . esc_url( add_query_arg( array( 'action' => 'kaae_ms_start', 'redirect_to' => rawurlencode( self::login_destination( wp_unslash( $_REQUEST['redirect_to'] ?? '' ) ) ) ), site_url( 'wp-login.php', 'https' ) ) ) . '">' . self::microsoft_logo() . '<span>Sign in with Microsoft</span></a></p>';
             if ( self::microsoft_only() && self::has_password_exception() ) {
                 echo '<p style="margin:12px 0">KAAE staff: use Microsoft sign-in. Password login is reserved for approved external accounts.</p>';
             }
         }
+    }
+
+    private static function login_destination( mixed $requested ): string {
+        if ( ! is_string( $requested ) || '' === trim( $requested ) ) {
+            return admin_url();
+        }
+        return wp_validate_redirect( $requested, admin_url() ) ?: admin_url();
     }
 
     public static function start_login(): void {
@@ -393,7 +400,7 @@ final class KAAE_MS_Login {
         $nonce = bin2hex( random_bytes( 32 ) );
         $verifier = bin2hex( random_bytes( 32 ) );
         $session = $user_id ? hash( 'sha256', wp_get_session_token() ) : '';
-        set_transient( 'kaae_ms_' . hash( 'sha256', $state ), array( 'browser' => hash( 'sha256', $browser ), 'nonce' => $nonce, 'verifier' => $verifier, 'uid' => $user_id, 'session' => $session, 'tenant' => $s['tenant'], 'client' => $s['client'], 'automatic_accounts' => (bool) $s['automatic_accounts'] ), 600 );
+        set_transient( 'kaae_ms_' . hash( 'sha256', $state ), array( 'browser' => hash( 'sha256', $browser ), 'nonce' => $nonce, 'verifier' => $verifier, 'uid' => $user_id, 'session' => $session, 'tenant' => $s['tenant'], 'client' => $s['client'], 'automatic_accounts' => (bool) $s['automatic_accounts'], 'redirect_to' => self::login_destination( wp_unslash( $_REQUEST['redirect_to'] ?? '' ) ) ), 600 );
         self::cookie( $browser, time() + 600 );
         $url = 'https://login.microsoftonline.com/' . $s['tenant'] . '/oauth2/v2.0/authorize';
         $scope = 'openid profile email' . ( $s['automatic_accounts'] ? ' https://graph.microsoft.com/User.Read' : '' );
@@ -506,7 +513,7 @@ final class KAAE_MS_Login {
             wp_set_auth_cookie( $user->ID, false, true );
             update_user_meta( $user->ID, self::VERIFIED, self::verification_stamp( $s, $identity ) );
             do_action( 'wp_login', $user->user_login, $user );
-            wp_safe_redirect( admin_url() );
+            wp_safe_redirect( self::login_destination( $flow['redirect_to'] ?? '' ) );
             exit;
         } catch ( KAAE_MS_Account_Error $error ) {
             self::fail( $error->getMessage() );

@@ -36,6 +36,8 @@ notes = (
     f'KAAE Microsoft Login {version}\n\n'
     'Microsoft staff sign-in, automatic Subscriber onboarding, individual password preferences, '
     'and administrator-managed external-account password exceptions.\n\n'
+    'Preserves the validated WordPress redirect_to destination through Microsoft sign-in, '
+    'including report filters, while keeping the registered callback and profile-linking behavior unchanged.\n\n'
     'Install the attached kaae-microsoft-login.zip through WordPress. Configure Microsoft settings '
     'separately on each site. Read the setup guide and test the sign-in paths before enabling new policies.\n\n'
     f'Source commit: {commit}\n'

@@ -4,7 +4,7 @@ if ( PHP_SAPI !== 'cli' ) { http_response_code( 404 ); exit; }
 define( 'ABSPATH', __DIR__ );
 define( 'HOUR_IN_SECONDS', 3600 );
 $scenario = $argv[1] ?? 'existing';
-if ( ! in_array( $scenario, array( 'existing', 'new', 'manual', 'guest', 'wrong-tenant', 'wrong-nonce', 'conflicting' ), true ) ) { exit( 2 ); }
+if ( ! in_array( $scenario, array( 'existing', 'new', 'manual', 'guest', 'wrong-tenant', 'wrong-nonce', 'conflicting', 'redirect-report', 'redirect-relative', 'redirect-external', 'redirect-array', 'redirect-query-only', 'redirect-query-injection', 'profile-link' ), true ) ) { exit( 2 ); }
 class WP_User {
     public function __construct( public int $ID, public string $user_email, public array $roles = array( 'subscriber' ), public string $user_login = 'staff' ) {}
 }
@@ -27,7 +27,31 @@ if ( 'conflicting' === $scenario ) { $meta[7]['_kaae_ms_identity'] = 'another-te
 $state = str_repeat( 'a', 64 );
 $browser = str_repeat( 'b', 64 );
 $flow = array( 'browser' => hash( 'sha256', $browser ), 'nonce' => 'expected-nonce', 'verifier' => 'offline-verifier', 'uid' => 0, 'session' => '', 'tenant' => $tenant, 'client' => $client, 'automatic_accounts' => $settings['automatic_accounts'] );
+$reports = 'https://example.test/reports/?status=open&team=Finance%20%26%20Admin&search=A%2BB&page=2';
+$expected_destination = 'https://example.test/wp-admin/';
+switch ( $scenario ) {
+    case 'redirect-report':
+    case 'redirect-query-injection':
+        $flow['redirect_to'] = $reports;
+        $expected_destination = $reports;
+        break;
+    case 'redirect-relative':
+        $flow['redirect_to'] = '/reports/?status=open&team=Finance';
+        $expected_destination = $flow['redirect_to'];
+        break;
+    case 'redirect-external': $flow['redirect_to'] = 'https://untrusted.test/reports/'; break;
+    case 'redirect-array': $flow['redirect_to'] = array( '/reports/' ); break;
+    case 'profile-link':
+        $flow['uid'] = 7;
+        $flow['session'] = hash( 'sha256', 'offline-session' );
+        $flow['redirect_to'] = $reports;
+        $expected_destination = 'https://example.test/wp-admin/profile.php';
+        break;
+}
 $_GET = array( 'state' => $state, 'code' => 'offline-code' );
+// Even a same-site callback query must not override the stored login destination.
+if ( in_array( $scenario, array( 'redirect-query-only', 'redirect-query-injection' ), true ) ) { $_GET['redirect_to'] = 'https://example.test/other-page/?injected=1'; }
+$_REQUEST = $_GET;
 $_COOKIE = array( '__Host-kaae_ms' => $browser );
 $private = openssl_pkey_new( array( 'private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA ) );
 $details = openssl_pkey_get_details( $private );
@@ -47,6 +71,13 @@ function wp_parse_args( $args, $defaults ) { return array_merge( $defaults, $arg
 function is_ssl() { return true; }
 function nocache_headers() {}
 function wp_unslash( $value ) { return $value; }
+function get_current_user_id() { return 'profile-link' === $GLOBALS['scenario'] ? 7 : 0; }
+function wp_get_session_token() { return 'offline-session'; }
+function wp_validate_redirect( $requested, $fallback = '' ) {
+    $parts = parse_url( $requested );
+    if ( false === $parts || ( isset( $parts['scheme'] ) && ! in_array( $parts['scheme'], array( 'http', 'https' ), true ) ) || ( isset( $parts['host'] ) && 'example.test' !== $parts['host'] ) ) { return $fallback; }
+    return $requested;
+}
 function get_transient( $key ) { return str_starts_with( $key, 'kaae_ms_keys_' ) ? $GLOBALS['keys'] : $GLOBALS['flow']; }
 function delete_transient( $key ) { $GLOBALS['state_deleted'] = true; }
 function set_transient( ...$args ) { return true; }
@@ -56,6 +87,7 @@ function add_query_arg( $key, $value, $url ) { return $url . '?' . $key . '=' . 
 function wp_remote_post( $url, $args ) {
     insist( $url === 'https://login.microsoftonline.com/' . $GLOBALS['tenant'] . '/oauth2/v2.0/token', 'Wrong token endpoint.' );
     insist( 'offline-verifier' === $args['body']['code_verifier'], 'PKCE verifier missing.' );
+    insist( 'https://example.test/wp-login.php?action=kaae_ms_callback' === $args['body']['redirect_uri'], 'Registered callback URI changed.' );
     return array( 'status' => 200, 'body' => array( 'id_token' => $GLOBALS['token'], 'access_token' => 'offline-access' ) );
 }
 function wp_remote_get( $url, $args ) {
@@ -104,7 +136,13 @@ function do_action( $hook, ...$args ) { if ( 'wp_login' === $hook ) { $GLOBALS['
 function admin_url( $path = '' ) { return 'https://example.test/wp-admin/' . $path; }
 function wp_safe_redirect( $url ) {
     $scenario = $GLOBALS['scenario'];
-    insist( in_array( $scenario, array( 'existing', 'new', 'manual' ), true ), 'Invalid identity reached redirect.' );
+    insist( $url === $GLOBALS['expected_destination'], 'Wrong final destination or callback query overrode the saved destination.' );
+    if ( 'profile-link' === $scenario ) {
+        insist( ! $GLOBALS['authenticated'] && $GLOBALS['meta'][7]['_kaae_ms_identity'] === $GLOBALS['identity'], 'Profile linking behavior changed.' );
+        echo "Profile-link redirect passed.\n";
+        exit;
+    }
+    insist( in_array( $scenario, array( 'existing', 'new', 'manual', 'redirect-report', 'redirect-relative', 'redirect-external', 'redirect-array', 'redirect-query-only', 'redirect-query-injection' ), true ), 'Invalid identity reached redirect.' );
     $id = $GLOBALS['authenticated'];
     insist( $id && $GLOBALS['login_hook'], 'Missing authenticated user or login hook.' );
     insist( $GLOBALS['meta'][ $id ]['_kaae_ms_identity'] === $GLOBALS['identity'], 'Identity not saved.' );

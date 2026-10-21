@@ -36,8 +36,9 @@ jobs:
           php tests/policy.php recovery
           php tests/accounts.php
           php tests/updates.php
+          php tests/redirects.php
           python3 tests/release.py
-          for scenario in existing new manual guest wrong-tenant wrong-nonce conflicting; do
+          for scenario in existing new manual guest wrong-tenant wrong-nonce conflicting redirect-report redirect-relative redirect-external redirect-array redirect-query-only redirect-query-injection profile-link; do
             php tests/callback.php "$scenario"
           done
       - name: Verify installable ZIP
