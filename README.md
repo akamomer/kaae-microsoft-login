@@ -1,6 +1,10 @@
-# KAAE Microsoft Login — 0.4.3
+# KAAE Microsoft Login — 0.4.4
 
 One plugin for separate WordPress installations. Each site's users, settings and Microsoft connections remain independent. Development has not enabled the new onboarding/exception settings, granted Microsoft consent, or created production users.
+
+## v0.4.4: Refresh GitHub metadata from WordPress Check again
+
+Dashboard → Updates → Check again now clears both the plugin's GitHub release cache and WordPress's plugin-update cache before WordPress performs its check. Previously, WordPress could keep reporting an older GitHub release for up to fifteen minutes even after the administrator requested a fresh check. Ordinary dashboard visits retain caching. The early hook requires update_plugins permission and only refreshes update metadata; it does not install anything or change authentication settings. The plugin's own Check for updates button continues to work.
 
 ## v0.4.3: Return to the requested page after Microsoft sign-in
 

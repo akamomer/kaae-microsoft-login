@@ -10,6 +10,8 @@ final class KAAE_MS_Updates {
         add_filter( 'update_plugins_github.com', array( self::class, 'check' ), 10, 4 );
         add_action( 'admin_post_kaae_ms_check_updates', array( self::class, 'check_now' ) );
         add_filter( 'plugin_action_links_' . self::$plugin, array( self::class, 'action_links' ) );
+        // Run before WordPress's priority-10 plugin update check on this screen.
+        add_action( 'load-update-core.php', array( self::class, 'refresh_dashboard_check' ), 1 );
     }
 
     private static function repository(): string {
@@ -40,6 +42,16 @@ final class KAAE_MS_Updates {
         wp_update_plugins(); // Checks only; installation uses WordPress's normal UI.
         wp_safe_redirect( admin_url( 'options-general.php?page=kaae-ms#kaae-ms-updates' ) );
         exit;
+    }
+
+    public static function refresh_dashboard_check(): void {
+        if ( empty( $_GET['force-check'] ) || ! current_user_can( 'update_plugins' ) ) {
+            return;
+        }
+        // Dashboard → Updates → Check again must bypass both independent caches.
+        delete_transient( 'kaae_ms_release' );
+        delete_transient( 'kaae_ms_update_status' );
+        delete_site_transient( 'update_plugins' );
     }
 
     public static function render(): void {

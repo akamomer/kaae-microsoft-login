@@ -17,7 +17,7 @@ $response = array( 'status' => 404, 'body' => '{}' );
 $data = array( 'UpdateURI' => 'https://github.com/akamomer/kaae-microsoft-login', 'Version' => '0.4.1' );
 $file = 'kaae-microsoft-login/kaae-microsoft-login.php';
 function check( $condition, $message ) { ++$GLOBALS['count']; if ( ! $condition ) { throw new RuntimeException( $message ); } }
-function add_action( ...$args ) {}
+function add_action( ...$args ) { $GLOBALS['actions'][ $args[0] ] = $args; }
 function add_filter( ...$args ) {}
 function plugin_basename( $path ) { return $GLOBALS['file']; }
 function get_transient( $key ) { return $GLOBALS['cache'][ $key ] ?? false; }
@@ -87,4 +87,23 @@ $nonce = false;
 try { KAAE_MS_Updates::check_now(); } catch ( UpdateStop $e ) { check( 'nonce' === $e->getMessage(), 'Update nonce not checked.' ); }
 check( 1 === $checks, 'Invalid nonce triggered a check.' );
 check( str_contains( implode( '', KAAE_MS_Updates::action_links( array() ) ), 'Check for updates' ), 'Installed Plugins link missing.' );
+
+// WordPress's own Check again must invalidate the GitHub cache before core checks.
+check( 1 === $GLOBALS['actions']['load-update-core.php'][2], 'Dashboard cache refresh runs too late.' );
+$cache = array( 'kaae_ms_release' => array( 'tag_name' => 'v0.4.0' ), 'kaae_ms_update_status' => array( 'code' => 'ready', 'version' => '0.4.0' ) );
+$_GET = array();
+$before = $cache;
+KAAE_MS_Updates::refresh_dashboard_check();
+check( $before === $cache, 'Ordinary dashboard visits unnecessarily clear update caches.' );
+$_GET['force-check'] = '1';
+$allowed = false;
+KAAE_MS_Updates::refresh_dashboard_check();
+check( $before === $cache, 'Unauthorized request cleared update caches.' );
+$allowed = true;
+KAAE_MS_Updates::refresh_dashboard_check();
+check( false === get_transient( 'kaae_ms_release' ) && false === get_transient( 'kaae_ms_update_status' ) && 'update_plugins' === $GLOBALS['cleared_site_cache'], 'Dashboard Check again left stale update metadata.' );
+$response['body'] = json_encode( $release );
+$previous_calls = $calls;
+wp_update_plugins();
+check( $calls === $previous_calls + 1 && '0.4.2' === $cache['kaae_ms_update_status']['version'], 'Dashboard check did not fetch the newer release after invalidation.' );
 echo $count . " offline update-control checks passed.\n";
