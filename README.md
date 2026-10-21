@@ -1,4 +1,4 @@
-# KAAE Microsoft Login — 0.4.0
+# KAAE Microsoft Login — 0.4.1
 
 One plugin for separate WordPress installations. Each site's users, settings and Microsoft connections remain independent. Development has not enabled the new onboarding/exception settings, granted Microsoft consent, or created production users.
 

@@ -11,7 +11,7 @@ final class KAAE_MS_Setup_Guide {
             <p><strong>During initial setup, leave “Require Microsoft sign-in for all users” off until your administrator’s Microsoft login works.</strong> If it is already enforced, keep your current administrator session open while changing onboarding settings and testing the external-user exception.</p>
             <ol style="margin-left:24px">
                 <li>
-                    <h3>1. Register the KAAE application</h3>
+                    <h3>Register the KAAE application</h3>
                     <p>Open the <a href="https://entra.microsoft.com/" target="_blank" rel="noopener noreferrer">Microsoft Entra admin center</a>. Make sure you are in KAAE’s directory, then open <strong>Entra ID → App registrations → New registration</strong>.</p>
                     <ul style="list-style:disc;margin-left:24px">
                         <li><strong>Name:</strong> enter <code>KAAE WordPress Sign-in</code>.</li>
@@ -20,7 +20,7 @@ final class KAAE_MS_Setup_Guide {
                     </ul>
                 </li>
                 <li>
-                    <h3>2. Add this site’s Web redirect URI</h3>
+                    <h3>Add this site’s Web redirect URI</h3>
                     <p>Inside the app registration, open <strong>Authentication → Redirect URI configuration → Add Redirect URI</strong>, then select <strong>Web</strong>. Some portal versions show <strong>Add a platform → Web</strong>. Paste the exact address below and save/configure the platform:</p>
                     <label for="kaae-ms-guide-callback"><strong>Redirect URI for this WordPress installation</strong></label>
                     <input id="kaae-ms-guide-callback" class="large-text code" type="text" readonly value="<?php echo esc_attr( $callback ); ?>" style="margin-top:6px;max-width:100%">
@@ -29,7 +29,7 @@ final class KAAE_MS_Setup_Guide {
                     <p><strong>For form.kaae.org:</strong> the same app registration can contain a second Web redirect URI. Install the plugin there, open its settings page, and copy that installation’s exact redirect URI into this same application. Configure each WordPress installation separately; account connections are separate too.</p>
                 </li>
                 <li>
-                    <h3>3. Copy the two application IDs</h3>
+                    <h3>Copy the two application IDs</h3>
                     <p>Return to the app registration’s <strong>Overview</strong> page. Copy these values into the matching fields below:</p>
                     <table class="widefat striped" style="max-width:800px">
                         <thead><tr><th scope="col">Microsoft Overview field</th><th scope="col">Plugin field</th></tr></thead>
@@ -41,14 +41,14 @@ final class KAAE_MS_Setup_Guide {
                     <p>Both are IDs in the form <code>xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx</code>. The Object ID and your email domain are different values.</p>
                 </li>
                 <li>
-                    <h3>4. Create and save a client secret</h3>
+                    <h3>Create and save a client secret</h3>
                     <p>Open <strong>Certificates &amp; secrets → Client secrets → New client secret</strong>. Enter a description, choose an expiry that follows KAAE’s policy, and select <strong>Add</strong>.</p>
                     <p>Copy the new secret’s <strong>Value</strong> immediately into the <strong>Client secret</strong> field below. Microsoft displays the value only once. The <strong>Secret ID</strong> is different and will not work. Record the expiry in your organization’s credential-management process so the secret can be renewed before sign-in stops working.</p>
                     <p>Keep the secret in your approved credential store and this site’s configuration; do not paste it into chat, email, GitHub, or screenshots. The plugin leaves this field empty after saving; an empty field on later saves keeps the stored secret.</p>
                     <p class="description">This version supports client-secret authentication only. Microsoft recommends certificate or federated credentials for production; those credential types are not implemented in this version. <a href="https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials" target="_blank" rel="noopener noreferrer">Microsoft credential guidance</a>.</p>
                 </li>
                 <li>
-                    <h3>5. Choose manual connection or automatic staff accounts</h3>
+                    <h3>Choose manual connection or automatic staff accounts</h3>
                     <p>Leave <strong>Require Microsoft sign-in for all users</strong> unchecked and select <strong>Save Changes</strong> below. GitHub configuration is optional and can stay blank during Microsoft setup.</p>
                     <p>Open <a href="<?php echo esc_url( $profile_url ); ?>">Users → Profile</a>. Your WordPress email must match your Microsoft work <strong>sign-in address</strong> exactly and end in <code>@kaae.org</code>. A mailbox alias can differ from your Microsoft sign-in address.</p>
                     <p>For <strong>manual connection</strong>, under <strong>KAAE Microsoft account</strong>, select <strong>Connect Microsoft account</strong> and choose your own KAAE work account. This connects an existing WordPress user.</p>
@@ -58,7 +58,7 @@ final class KAAE_MS_Setup_Guide {
                     <p><strong>External users:</strong> enter each existing external WordPress user’s email on a separate line in <strong>External user password exceptions</strong> below and save. Only the listed users can retain password sign-in while Microsoft-only mode is enforced. Your previous single-user exception appears automatically. This list does not create WordPress accounts; external users must already exist.</p>
                 </li>
                 <li>
-                    <h3>6. Test before requiring Microsoft sign-in</h3>
+                    <h3>Test before requiring Microsoft sign-in</h3>
                     <p>Keep this administrator session open. In a separate browser or private window, visit this site’s login page, select <strong>Sign in with Microsoft</strong>, and complete any Microsoft and WordPress security challenges. Confirm that you reach the correct WordPress account with its existing permissions.</p>
                     <p>In manual mode, have every required staff member connect their own account on each site. In automatic mode, test a matching existing staff account and a new staff account; the new account must have Subscriber permissions. Also test the selected external user’s password login. Then enable <strong>Require Microsoft sign-in for all users</strong>. The plugin requires a successful Microsoft authentication test for your connected administrator account using the current credential configuration before that setting can be saved.</p>
                     <p>Connected users can also choose <strong>Disable password sign-in for my account</strong> in Users → Profile after testing Microsoft sign-in, then select <strong>Update Profile</strong>. Clearing that preference does not override a site-wide Microsoft-only rule.</p>
