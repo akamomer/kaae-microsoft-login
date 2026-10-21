@@ -3,8 +3,9 @@
 if ( PHP_SAPI !== 'cli' ) { http_response_code( 404 ); exit; }
 define( 'ABSPATH', __DIR__ );
 define( 'HOUR_IN_SECONDS', 3600 );
+define( 'MINUTE_IN_SECONDS', 60 );
 $scenario = $argv[1] ?? 'existing';
-if ( ! in_array( $scenario, array( 'existing', 'new', 'manual', 'guest', 'wrong-tenant', 'wrong-nonce', 'conflicting', 'redirect-report', 'redirect-relative', 'redirect-external', 'redirect-array', 'redirect-query-only', 'redirect-query-injection', 'profile-link' ), true ) ) { exit( 2 ); }
+if ( ! in_array( $scenario, array( 'existing', 'new', 'manual', 'guest', 'wrong-tenant', 'wrong-nonce', 'conflicting', 'redirect-report', 'redirect-relative', 'redirect-external', 'redirect-array', 'redirect-query-only', 'redirect-query-injection', 'profile-link', 'blocked', 'unapproved', 'unapproved-new', 'approved', 'directory', 'directory-wrong-account', 'directory-wrong-session', 'enrolled-manual', 'enrolled-guest' ), true ) ) { exit( 2 ); }
 class WP_User {
     public function __construct( public int $ID, public string $user_email, public array $roles = array( 'subscriber' ), public string $user_login = 'staff' ) {}
 }
@@ -19,14 +20,25 @@ $tenant = '11111111-1111-1111-1111-111111111111';
 $client = '22222222-2222-2222-2222-222222222222';
 $oid = '33333333-3333-3333-3333-333333333333';
 $identity = $tenant . ':' . $oid;
-$settings = array( 'tenant' => $tenant, 'client' => $client, 'secret' => 'offline-secret', 'microsoft_only' => true, 'automatic_accounts' => 'manual' !== $scenario );
-$users = 'new' === $scenario ? array() : array( 7 => new WP_User( 7, 'staff@kaae.org', array( 'editor' ) ) );
+$settings = array( 'tenant' => $tenant, 'client' => $client, 'secret' => 'offline-secret', 'microsoft_only' => true, 'automatic_accounts' => ! in_array( $scenario, array( 'manual', 'enrolled-manual', 'enrolled-guest' ), true ) );
+$settings['approved_staff_only'] = in_array( $scenario, array( 'approved', 'unapproved', 'unapproved-new' ), true );
+$users = in_array( $scenario, array( 'new', 'unapproved-new' ), true ) ? array() : array( 7 => new WP_User( 7, 'staff@kaae.org', array( 'editor' ) ) );
+$access = array();
+if ( 'blocked' === $scenario ) { $access['kaae_ms_access_' . hash( 'sha256', $identity )] = array( 'blocked' => true ); }
+if ( in_array( $scenario, array( 'approved', 'enrolled-manual', 'enrolled-guest' ), true ) ) { $access['kaae_ms_access_' . hash( 'sha256', $identity )] = array( 'approved' => true ); }
+$transients = array(); $directory_requested = false; $profile_requested = false;
 $meta = array();
-if ( 'manual' === $scenario ) { $meta[7]['_kaae_ms_identity'] = $identity; }
+if ( in_array( $scenario, array( 'manual', 'enrolled-manual', 'enrolled-guest' ), true ) ) { $meta[7]['_kaae_ms_identity'] = $identity; }
 if ( 'conflicting' === $scenario ) { $meta[7]['_kaae_ms_identity'] = 'another-tenant:another-object'; }
 $state = str_repeat( 'a', 64 );
 $browser = str_repeat( 'b', 64 );
 $flow = array( 'browser' => hash( 'sha256', $browser ), 'nonce' => 'expected-nonce', 'verifier' => 'offline-verifier', 'uid' => 0, 'session' => '', 'tenant' => $tenant, 'client' => $client, 'automatic_accounts' => $settings['automatic_accounts'] );
+$flow['approved_staff_only'] = $settings['approved_staff_only'];
+if ( str_starts_with( $scenario, 'directory' ) ) {
+    $flow['purpose'] = 'directory'; $flow['uid'] = 7;
+    $flow['session'] = hash( 'sha256', 'directory-wrong-session' === $scenario ? 'different-session' : 'offline-session' );
+    $meta[7]['_kaae_ms_identity'] = 'directory-wrong-account' === $scenario ? 'other-identity' : $identity;
+}
 $reports = 'https://example.test/reports/?status=open&team=Finance%20%26%20Admin&search=A%2BB&page=2';
 $expected_destination = 'https://example.test/wp-admin/';
 switch ( $scenario ) {
@@ -66,21 +78,27 @@ $login_hook = false;
 $policy_hook = false;
 $state_deleted = false;
 function insist( $condition, $message ) { if ( ! $condition ) { fwrite( STDERR, $message . "\n" ); exit( 1 ); } }
-function get_option( $key, $default = false ) { return $GLOBALS['settings']; }
+function get_option( $key, $default = false ) { return 'kaae_ms_settings' === $key ? $GLOBALS['settings'] : ( $GLOBALS['access'][$key] ?? $default ); }
 function wp_parse_args( $args, $defaults ) { return array_merge( $defaults, $args ); }
 function is_ssl() { return true; }
 function nocache_headers() {}
 function wp_unslash( $value ) { return $value; }
-function get_current_user_id() { return 'profile-link' === $GLOBALS['scenario'] ? 7 : 0; }
+function get_current_user_id() { return 'profile-link' === $GLOBALS['scenario'] || str_starts_with( $GLOBALS['scenario'], 'directory' ) ? 7 : 0; }
+function current_user_can( $cap, ...$args ) { return true; }
 function wp_get_session_token() { return 'offline-session'; }
 function wp_validate_redirect( $requested, $fallback = '' ) {
     $parts = parse_url( $requested );
     if ( false === $parts || ( isset( $parts['scheme'] ) && ! in_array( $parts['scheme'], array( 'http', 'https' ), true ) ) || ( isset( $parts['host'] ) && 'example.test' !== $parts['host'] ) ) { return $fallback; }
     return $requested;
 }
-function get_transient( $key ) { return str_starts_with( $key, 'kaae_ms_keys_' ) ? $GLOBALS['keys'] : $GLOBALS['flow']; }
+function get_transient( $key ) {
+    if ( isset( $GLOBALS['transients'][$key] ) ) { return $GLOBALS['transients'][$key]; }
+    if ( str_starts_with( $key, 'kaae_ms_keys_' ) ) { return $GLOBALS['keys']; }
+    return $key === 'kaae_ms_' . hash( 'sha256', $GLOBALS['state'] ) ? $GLOBALS['flow'] : false;
+}
 function delete_transient( $key ) { $GLOBALS['state_deleted'] = true; }
-function set_transient( ...$args ) { return true; }
+function set_transient( $key, $value, $ttl ) { $GLOBALS['transients'][$key] = $value; return true; }
+function wp_parse_url( $url ) { return parse_url( $url ); }
 function is_wp_error( $value ) { return $value instanceof WP_Error; }
 function site_url( $path, $scheme = '' ) { return 'https://example.test/' . $path; }
 function add_query_arg( $key, $value, $url ) { return $url . '?' . $key . '=' . $value; }
@@ -91,9 +109,15 @@ function wp_remote_post( $url, $args ) {
     return array( 'status' => 200, 'body' => array( 'id_token' => $GLOBALS['token'], 'access_token' => 'offline-access' ) );
 }
 function wp_remote_get( $url, $args ) {
+    if ( str_starts_with( $url, 'https://graph.microsoft.com/v1.0/users?' ) ) {
+        $GLOBALS['directory_requested'] = true;
+        insist( 'directory' === $GLOBALS['scenario'] && 'Bearer offline-access' === $args['headers']['Authorization'] && 0 === $args['redirection'], 'Directory was fetched without verifying the administrator identity/session.' );
+        return array( 'status' => 200, 'body' => array( 'value' => array( array( 'id' => $GLOBALS['oid'], 'displayName' => 'Staff', 'mail' => 'staff@kaae.org', 'userPrincipalName' => 'staff@kaae.org' ) ) ) );
+    }
     insist( 'https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName,userType' === $url, 'Wrong Graph endpoint.' );
+    $GLOBALS['profile_requested'] = true;
     insist( 0 === $args['redirection'] && 'Bearer offline-access' === $args['headers']['Authorization'], 'Unsafe Graph token handling.' );
-    return array( 'status' => 200, 'body' => array( 'id' => $GLOBALS['oid'], 'userPrincipalName' => 'staff@kaae.org', 'userType' => 'guest' === $GLOBALS['scenario'] ? 'Guest' : 'Member' ) );
+    return array( 'status' => 200, 'body' => array( 'id' => $GLOBALS['oid'], 'userPrincipalName' => 'staff@kaae.org', 'userType' => in_array( $GLOBALS['scenario'], array( 'guest', 'enrolled-guest' ), true ) ? 'Guest' : 'Member' ) );
 }
 function wp_remote_retrieve_response_code( $response ) { return $response['status']; }
 function wp_remote_retrieve_body( $response ) { return json_encode( $response['body'] ); }
@@ -136,13 +160,19 @@ function do_action( $hook, ...$args ) { if ( 'wp_login' === $hook ) { $GLOBALS['
 function admin_url( $path = '' ) { return 'https://example.test/wp-admin/' . $path; }
 function wp_safe_redirect( $url ) {
     $scenario = $GLOBALS['scenario'];
+    if ( 'directory' === $scenario ) {
+        insist( $url === admin_url( 'users.php?page=kaae-ms-staff' ) && ! $GLOBALS['authenticated'] && $GLOBALS['directory_requested'], 'Directory callback changed login state or destination.' );
+        insist( count( KAAE_MS_Staff::directory() ) === 1 && ! str_contains( serialize( $GLOBALS['transients'] ), 'offline-access' ), 'Directory token persisted or snapshot was lost.' );
+        echo "Administrator directory callback passed.\n"; exit;
+    }
     insist( $url === $GLOBALS['expected_destination'], 'Wrong final destination or callback query overrode the saved destination.' );
     if ( 'profile-link' === $scenario ) {
         insist( ! $GLOBALS['authenticated'] && $GLOBALS['meta'][7]['_kaae_ms_identity'] === $GLOBALS['identity'], 'Profile linking behavior changed.' );
         echo "Profile-link redirect passed.\n";
         exit;
     }
-    insist( in_array( $scenario, array( 'existing', 'new', 'manual', 'redirect-report', 'redirect-relative', 'redirect-external', 'redirect-array', 'redirect-query-only', 'redirect-query-injection' ), true ), 'Invalid identity reached redirect.' );
+    insist( in_array( $scenario, array( 'existing', 'new', 'manual', 'redirect-report', 'redirect-relative', 'redirect-external', 'redirect-array', 'redirect-query-only', 'redirect-query-injection', 'approved', 'enrolled-manual' ), true ), 'Invalid identity reached redirect.' );
+    if ( 'enrolled-manual' === $scenario ) { insist( $GLOBALS['profile_requested'], 'Directory-enrolled staff bypassed Member verification in manual mode.' ); }
     $id = $GLOBALS['authenticated'];
     insist( $id && $GLOBALS['login_hook'], 'Missing authenticated user or login hook.' );
     insist( $GLOBALS['meta'][ $id ]['_kaae_ms_identity'] === $GLOBALS['identity'], 'Identity not saved.' );
@@ -153,9 +183,10 @@ function wp_safe_redirect( $url ) {
 }
 function esc_html( $value ) { return $value; }
 function wp_die( $message, ...$args ) {
-    insist( in_array( $GLOBALS['scenario'], array( 'guest', 'wrong-tenant', 'wrong-nonce', 'conflicting' ), true ), 'Unexpected callback failure: ' . $message );
+    insist( in_array( $GLOBALS['scenario'], array( 'guest', 'wrong-tenant', 'wrong-nonce', 'conflicting', 'blocked', 'unapproved', 'unapproved-new', 'directory-wrong-account', 'directory-wrong-session', 'enrolled-guest' ), true ), 'Unexpected callback failure: ' . $message );
     insist( ! $GLOBALS['authenticated'], 'Failed identity was authenticated.' );
-    insist( count( $GLOBALS['users'] ) === 1, 'Rejected identity created a user.' );
+    insist( count( $GLOBALS['users'] ) === ( 'unapproved-new' === $GLOBALS['scenario'] ? 0 : 1 ), 'Rejected identity created a user.' );
+    insist( ! $GLOBALS['directory_requested'], 'Rejected administrator directory flow read the directory.' );
     insist( false === strpos( $message, 'offline-secret' ) && false === strpos( $message, $GLOBALS['token'] ), 'Secret/token leaked.' );
     echo 'Callback rejection passed: ' . $GLOBALS['scenario'] . "\n";
     exit;

@@ -15,6 +15,7 @@ function wp_parse_args( $args, $defaults ) { return array_merge( $defaults, $arg
 function wp_unslash( $value ) { return $value; }
 function is_ssl() { return true; }
 function nocache_headers() {}
+function wp_get_session_token() { return 'offline-admin-session'; }
 function esc_url( $value ) { return htmlspecialchars( $value, ENT_QUOTES, 'UTF-8' ); }
 function wp_validate_redirect( $requested, $fallback = '' ) {
     ++$GLOBALS['validator_calls'];
@@ -61,9 +62,14 @@ check( $reports === $saved['value']['redirect_to'] && 600 === $saved['ttl']
     && $saved['key'] === 'kaae_ms_' . hash( 'sha256', $authorization['state'] )
     && strlen( $saved['value']['browser'] ) === 64
     && 'https://example.test/wp-login.php?action=kaae_ms_callback' === $authorization['redirect_uri']
+    && ! str_contains( $authorization['scope'], 'User.ReadBasic.All' )
     && 'S256' === $authorization['code_challenge_method']
     && rtrim( strtr( base64_encode( hash( 'sha256', $saved['value']['verifier'], true ) ), '+/', '-_' ), '=' ) === $authorization['code_challenge'], 'Start lost the destination, browser binding, TTL, callback URI or PKCE.' );
 $_REQUEST = array( 'redirect_to' => 'https://untrusted.test/reports/' );
 try { KAAE_MS_Login::start_login(); } catch ( RedirectCaptured $error ) {}
 check( admin_url() === $saved['value']['redirect_to'], 'Start stored an unsafe destination.' );
-echo $count . " redirect helper/button/start regression cases passed.\n";
+$begin = new ReflectionMethod( KAAE_MS_Login::class, 'begin' );
+try { $begin->invoke( null, 7, true ); } catch ( RedirectCaptured $error ) {}
+parse_str( parse_url( $authorization_url, PHP_URL_QUERY ), $directory_auth );
+check( str_contains( $directory_auth['scope'], 'https://graph.microsoft.com/User.ReadBasic.All' ) && str_contains( $directory_auth['scope'], 'https://graph.microsoft.com/User.Read' ) && 'directory' === $saved['value']['purpose'] && 7 === $saved['value']['uid'] && hash( 'sha256', 'offline-admin-session' ) === $saved['value']['session'], 'Administrator directory authorization lost scope or session binding.' );
+echo $count . " redirect/start and administrator-scope regression cases passed.\n";

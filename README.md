@@ -1,6 +1,30 @@
-# KAAE Microsoft Login — 0.4.4
+# KAAE Microsoft Login — 0.5.0
 
 One plugin for separate WordPress installations. Each site's users, settings and Microsoft connections remain independent. Development has not enabled the new onboarding/exception settings, granted Microsoft consent, or created production users.
+
+## v0.5.0: KAAE Staff directory and access management
+
+Open **Users → KAAE Staff** (also linked from plugin settings). Staff management requires WordPress manage_options, list_users, create_users and edit_users permissions; individual existing accounts also require edit_user permission. This feature supports separate standalone WordPress installations.
+
+1. Add Microsoft Graph **Delegated User.ReadBasic.All** to the existing Entra app and obtain consent under KAAE policy. Keep User.Read. No Graph application, directory-write or mail permissions are needed.
+2. Connect your own WordPress administrator account to Microsoft and complete a Microsoft sign-in once using the current configuration.
+3. Select **Load directory from Microsoft**. The plugin starts a separate-purpose OAuth transaction bound to the original WordPress administrator/session, using the same registered callback URL, state cookie, nonce and PKCE. The returned tenant/object ID must match the administrator's already-linked identity. Permissions and the original session are checked again before loading the directory. Normal staff sign-ins do not request User.ReadBasic.All.
+4. The directory lists display name, canonical sign-in UPN, mailbox email, WordPress role and access status. Search and select up to 50 people per page, then apply Enroll / approve, Block access and end sessions, or Unblock access.
+5. Enroll your own administrator and required staff first. If you want only your selection to have access, enable **Approved staff only** in plugin settings. Enabling is refused unless your administrator's linked identity is approved and its Microsoft sign-in has been tested. The setting defaults off, and old settings forms preserve its saved value. No users are automatically approved just by viewing/loading the directory.
+
+**Enroll / approve** uses the existing identity/email conflict rules and enrollment lock. New WordPress users receive Subscriber and a random password with local password authentication disabled; existing roles and passwords are preserved. Selecting a directory identity binds the account to its immutable tenant/object ID. Enroll does not remove an existing block.
+
+**Block** saves a local per-identity block, marks any matching WordPress account, and destroys its WordPress session tokens. It denies Microsoft/password/application-password authentication and existing-cookie access regardless of automatic-account or approved-only settings. Blocking an unenrolled person creates no account and prevents later automatic enrollment. You cannot block your own WordPress administrator account or its connected Microsoft identity. Blocks apply to this site, not Microsoft or another WordPress installation.
+
+**Unblock** removes the local block and restores the prior approval state; it never grants approval to someone previously unapproved. Roles remain unchanged. For bulk operations, invalid/expired selections reject the entire request before actions; per-person database/conflict failures are reported individually alongside a completed count. POST, capabilities, nonce and current administrator/session directory snapshot are required. Per-identity MySQL advisory locks prevent concurrent enrollment overwriting a block.
+
+**Approved staff only** rejects unapproved KAAE Microsoft identities before matching/creating accounts and denies unapproved staff's existing cookies and other WordPress authentication paths. It also applies to linked staff whose email changes. External users without a Microsoft connection remain subject to the existing password-exception/site policy. The server-side KAAE_MS_PASSWORD_RECOVERY override also bypasses approval/block restrictions for emergency recovery. Do not enable the policy until your administrator and required staff are approved.
+
+Directory reads use GET /v1.0/users with only id, displayName, mail and userPrincipalName. Results are restricted to canonical @kaae.org UPNs; basic directory permission cannot establish Member/Guest status. All sign-ins request delegated User.Read (already required for automatic accounts), and actual sign-in verifies Member status through /me for directory-enrolled staff even when automatic accounts and approved-only mode are both off. Normal staff are never asked for User.ReadBasic.All. Lists follow Microsoft nextLink paging only over HTTPS to graph.microsoft.com/v1.0/users, with redirects disabled and page/size limits (50 pages / 5,000 matching people). Invalid, looping or cross-host paging fails closed without saving a partial new snapshot. Upstream directory changes may have replication delays. Sanitized profiles are cached for 15 minutes, scoped to the administrator's WordPress browser session and current tenant/client/secret configuration. No access or refresh token is stored. A stale snapshot cannot be used by another administrator/session or after credential changes.
+
+Installation/updating does not enroll, block, approve, or change a saved access policy. These changes occur only through the corresponding administrator controls. Each site keeps independent access records.
+
+Additional offline verification: `php tests/staff.php`, `php tests/staff.php recovery`, and callback scenarios blocked, unapproved, unapproved-new, approved, directory, directory-wrong-account, directory-wrong-session. These cover delegated paging, cache isolation, no token persistence, enrollment roles, self-block protection, session revocation, policy enforcement, stale/forged selections, permissions/nonces and the administrator OAuth binding. The redirect/start suite now includes a thirteenth check for administrator-only directory scopes/session binding. Live directory consent/loading and staff management still require administrator testing after update.
 
 ## v0.4.4: Refresh GitHub metadata from WordPress Check again
 

@@ -1,6 +1,7 @@
 <?php
 defined( 'ABSPATH' ) || exit;
 require_once __DIR__ . '/class-kaae-accounts.php';
+require_once __DIR__ . '/class-kaae-staff.php';
 
 final class KAAE_MS_Login {
     private const OPTION = 'kaae_ms_settings';
@@ -15,6 +16,7 @@ final class KAAE_MS_Login {
         add_action( 'admin_post_kaae_ms_settings', array( self::class, 'save_settings' ) );
         add_action( 'admin_post_kaae_ms_connect', array( self::class, 'connect' ) );
         add_action( 'admin_post_kaae_ms_disconnect', array( self::class, 'disconnect' ) );
+        add_action( 'admin_post_kaae_ms_directory_connect', array( self::class, 'directory_connect' ) );
         add_action( 'show_user_profile', array( self::class, 'profile' ) );
         add_action( 'personal_options_update', array( self::class, 'save_personal_policy' ) );
         add_action( 'login_form_kaae_ms_start', array( self::class, 'start_login' ) );
@@ -42,7 +44,7 @@ final class KAAE_MS_Login {
             ? ( is_array( $settings['password_exception_users'] ) ? $settings['password_exception_users'] : array() )
             : array( $settings['password_exception_user'] ?? 0 );
         $settings['password_exception_users'] = array_values( array_unique( array_filter( array_map( static fn( $id ) => is_int( $id ) || ( is_string( $id ) && ctype_digit( $id ) ) ? (int) $id : 0, $ids ), static fn( $id ) => $id > 0 ) ) );
-        return wp_parse_args( $settings, array( 'tenant' => '', 'client' => '', 'secret' => '', 'repository' => '', 'microsoft_only' => false, 'automatic_accounts' => false ) );
+        return wp_parse_args( $settings, array( 'tenant' => '', 'client' => '', 'secret' => '', 'repository' => '', 'microsoft_only' => false, 'automatic_accounts' => false, 'approved_staff_only' => false ) );
     }
 
     public static function microsoft_only(): bool {
@@ -52,6 +54,9 @@ final class KAAE_MS_Login {
     }
 
     public static function enforce_login( $user, $username = '', $password = '' ) {
+        if ( $user instanceof WP_User && ! KAAE_MS_Staff::user_allowed( $user ) ) {
+            return new WP_Error( 'kaae_ms_staff_denied', 'Your access to this WordPress site is blocked or not approved. Contact the site administrator.' );
+        }
         if ( $user instanceof WP_User && self::$verified_user === $user->ID ) {
             return $user;
         }
@@ -65,6 +70,7 @@ final class KAAE_MS_Login {
         if ( defined( 'KAAE_MS_PASSWORD_RECOVERY' ) && true === KAAE_MS_PASSWORD_RECOVERY ) {
             return false;
         }
+        if ( ! KAAE_MS_Staff::user_allowed( $user ) ) { return true; }
         if ( get_user_meta( $user->ID, KAAE_MS_Accounts::PASSWORD_DISABLED, true ) ) {
             return true;
         }
@@ -167,6 +173,7 @@ final class KAAE_MS_Login {
         }
         $s = self::settings();
         echo '<div class="wrap"><h1>KAAE Microsoft Login</h1><p>Manage Microsoft staff sign-in, automatic Subscriber accounts, and external users’ password exceptions.</p>';
+        echo '<p><a class="button" href="' . esc_url( admin_url( 'users.php?page=kaae-ms-staff' ) ) . '">Manage KAAE Staff</a></p>';
         KAAE_MS_Updates::render();
         require_once __DIR__ . '/class-kaae-setup-guide.php';
         KAAE_MS_Setup_Guide::render( self::callback_url(), admin_url( 'profile.php' ) );
@@ -189,6 +196,7 @@ final class KAAE_MS_Login {
         echo '<h3>Automatic KAAE staff accounts</h3><p><label><input type="checkbox" name="automatic_accounts" value="1" ' . checked( ! empty( $s['automatic_accounts'] ), true, false ) . '> Automatically connect existing KAAE users and create new staff as Subscribers</label></p>';
         echo '<p>Microsoft directory members with a verified directory sign-in address ending in @kaae.org can sign in directly. An existing WordPress user with that exact email keeps their role. A new user gets Subscriber only and has password sign-in disabled. An existing connection to a different Microsoft identity is never replaced automatically. Your Microsoft tenant administrators must control staff sign-in addresses and address reassignment.</p>';
         echo '<p>Before enabling, add <strong>Microsoft Graph → Delegated permissions → User.Read</strong> under the app’s API permissions and obtain consent according to KAAE policy. This reads only the signed-in user’s directory identity, membership type, and sign-in address. No mail or directory-wide permission is needed. <a href="https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0" target="_blank" rel="noopener noreferrer">Microsoft documentation</a>.</p>';
+        echo '<h3>Staff approval</h3><input type="hidden" name="kaae_ms_staff_policy_present" value="1"><p><label><input type="checkbox" name="approved_staff_only" value="1" ' . checked( ! empty( $s['approved_staff_only'] ), true, false ) . '> Approved staff only</label></p><p>When enabled, KAAE staff must be enrolled / approved from <strong>Users → KAAE Staff</strong> before they can access this site, even if automatic accounts are enabled. Enroll your own administrator account and required staff first. The selected external password exceptions remain separate. Explicitly blocked staff are denied regardless of this setting.</p>';
         $exception_emails = array();
         foreach ( $s['password_exception_users'] as $id ) {
             $exception = get_userdata( $id );
@@ -231,6 +239,10 @@ final class KAAE_MS_Login {
         $s['secret'] = '' !== $secret ? $secret : ( $old['secret'] ?? '' );
         $s['microsoft_only'] = isset( $_POST['microsoft_only'] ) && '1' === $_POST['microsoft_only'];
         $s['automatic_accounts'] = isset( $_POST['automatic_accounts'] ) && '1' === $_POST['automatic_accounts'];
+        $s['approved_staff_only'] = isset( $_POST['kaae_ms_staff_policy_present'] ) ? isset( $_POST['approved_staff_only'] ) : ! empty( $old['approved_staff_only'] );
+        if ( $s['approved_staff_only'] && ( is_multisite() || ! self::can_disable_password( get_current_user_id() ) || ! KAAE_MS_Staff::approved( (string) get_user_meta( get_current_user_id(), self::META, true ) ) ) ) {
+            self::fail( 'First test your administrator Microsoft sign-in and enroll / approve your own account in Users → KAAE Staff. No settings were saved.' );
+        }
         if ( $s['automatic_accounts'] && is_multisite() ) {
             self::fail( 'Automatic staff accounts currently support separate WordPress installations, not multisite.' );
         }
@@ -360,6 +372,13 @@ final class KAAE_MS_Login {
         self::begin( get_current_user_id() );
     }
 
+    public static function directory_connect(): void {
+        if ( ! KAAE_MS_Staff::can_manage() ) { self::fail( 'Administrator staff-management access is required.' ); }
+        check_admin_referer( 'kaae_ms_directory_connect' );
+        if ( ! self::can_disable_password( get_current_user_id() ) ) { self::fail( 'Connect your own administrator Microsoft account and complete a Microsoft sign-in before loading the staff directory.' ); }
+        self::begin( get_current_user_id(), true );
+    }
+
     public static function login_button(): void {
         if ( self::ready() ) {
             self::button_styles();
@@ -389,7 +408,7 @@ final class KAAE_MS_Login {
         setcookie( '__Host-kaae_ms', $value, array( 'expires' => $expires, 'path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'Lax' ) );
     }
 
-    private static function begin( int $user_id ): void {
+    private static function begin( int $user_id, bool $directory = false ): void {
         if ( ! self::ready() || headers_sent() ) {
             self::fail( 'Microsoft sign-in is not configured or HTTPS is unavailable.' );
         }
@@ -400,10 +419,10 @@ final class KAAE_MS_Login {
         $nonce = bin2hex( random_bytes( 32 ) );
         $verifier = bin2hex( random_bytes( 32 ) );
         $session = $user_id ? hash( 'sha256', wp_get_session_token() ) : '';
-        set_transient( 'kaae_ms_' . hash( 'sha256', $state ), array( 'browser' => hash( 'sha256', $browser ), 'nonce' => $nonce, 'verifier' => $verifier, 'uid' => $user_id, 'session' => $session, 'tenant' => $s['tenant'], 'client' => $s['client'], 'automatic_accounts' => (bool) $s['automatic_accounts'], 'redirect_to' => self::login_destination( wp_unslash( $_REQUEST['redirect_to'] ?? '' ) ) ), 600 );
+        set_transient( 'kaae_ms_' . hash( 'sha256', $state ), array( 'browser' => hash( 'sha256', $browser ), 'nonce' => $nonce, 'verifier' => $verifier, 'uid' => $user_id, 'session' => $session, 'tenant' => $s['tenant'], 'client' => $s['client'], 'automatic_accounts' => (bool) $s['automatic_accounts'], 'approved_staff_only' => (bool) $s['approved_staff_only'], 'purpose' => $directory ? 'directory' : 'login', 'redirect_to' => self::login_destination( wp_unslash( $_REQUEST['redirect_to'] ?? '' ) ) ), 600 );
         self::cookie( $browser, time() + 600 );
         $url = 'https://login.microsoftonline.com/' . $s['tenant'] . '/oauth2/v2.0/authorize';
-        $scope = 'openid profile email' . ( $s['automatic_accounts'] ? ' https://graph.microsoft.com/User.Read' : '' );
+        $scope = 'openid profile email https://graph.microsoft.com/User.Read' . ( $directory ? ' https://graph.microsoft.com/User.ReadBasic.All' : '' );
         $url = add_query_arg( array( 'client_id' => $s['client'], 'response_type' => 'code', 'redirect_uri' => self::callback_url(), 'response_mode' => 'query', 'scope' => $scope, 'state' => $state, 'nonce' => $nonce, 'code_challenge' => rtrim( strtr( base64_encode( hash( 'sha256', $verifier, true ) ), '+/', '-_' ), '=' ), 'code_challenge_method' => 'S256', 'prompt' => 'select_account' ), $url );
         wp_redirect( $url ); // Fixed Microsoft host; no user-controlled redirect destination.
         exit;
@@ -446,7 +465,7 @@ final class KAAE_MS_Login {
         delete_transient( $key );
         self::cookie( '', time() - 3600 );
         $s = self::settings();
-        if ( $flow['tenant'] !== $s['tenant'] || $flow['client'] !== $s['client'] || (bool) ( $flow['automatic_accounts'] ?? false ) !== (bool) $s['automatic_accounts'] ) {
+        if ( $flow['tenant'] !== $s['tenant'] || $flow['client'] !== $s['client'] || (bool) ( $flow['automatic_accounts'] ?? false ) !== (bool) $s['automatic_accounts'] || (bool) ( $flow['approved_staff_only'] ?? false ) !== (bool) $s['approved_staff_only'] ) {
             self::fail( 'Configuration changed. Please start again.' );
         }
         if ( isset( $_GET['error'] ) || empty( $_GET['code'] ) ) {
@@ -466,11 +485,22 @@ final class KAAE_MS_Login {
                 $keys = self::keys( $s['tenant'], true );
             }
             $claims = KAAE_MS_Token::verify( $jwt, $keys, $s['tenant'], $s['client'], $flow['nonce'] );
-            $email = $s['automatic_accounts'] ? KAAE_MS_Accounts::directory_email( $claims, (string) ( $body['access_token'] ?? '' ) ) : strtolower( $claims['preferred_username'] ?? '' );
+            $directory = 'directory' === ( $flow['purpose'] ?? '' );
+            $identity = $claims['tid'] . ':' . strtolower( $claims['oid'] );
+            KAAE_MS_Staff::assert_identity_access( $identity );
+            $managed_staff = ! empty( KAAE_MS_Staff::state( $identity )['approved'] );
+            $email = $s['automatic_accounts'] || $s['approved_staff_only'] || $directory || $managed_staff ? KAAE_MS_Accounts::directory_email( $claims, (string) ( $body['access_token'] ?? '' ) ) : strtolower( $claims['preferred_username'] ?? '' );
             if ( ! KAAE_MS_Accounts::kaae_email( $email ) ) {
                 self::fail( 'Use your KAAE Microsoft work account.' );
             }
-            $identity = $claims['tid'] . ':' . strtolower( $claims['oid'] );
+            if ( $directory ) {
+                if ( ! KAAE_MS_Staff::can_manage() || ! $flow['uid'] || get_current_user_id() !== $flow['uid'] || ! hash_equals( $flow['session'], hash( 'sha256', wp_get_session_token() ) ) || get_user_meta( $flow['uid'], self::META, true ) !== $identity ) {
+                    self::fail( 'Directory access must use the same connected administrator Microsoft account and original WordPress browser session.' );
+                }
+                KAAE_MS_Staff::load_directory( (string) ( $body['access_token'] ?? '' ) );
+                wp_safe_redirect( admin_url( 'users.php?page=kaae-ms-staff' ) );
+                exit;
+            }
             $matches = KAAE_MS_Accounts::identity_users( $identity );
             if ( $flow['uid'] ) {
                 if ( get_current_user_id() !== $flow['uid'] || ! hash_equals( $flow['session'], hash( 'sha256', wp_get_session_token() ) ) ) {

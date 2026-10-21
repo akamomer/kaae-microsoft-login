@@ -199,4 +199,34 @@ check( 'saved' === save() && array() === $options['kaae_ms_settings']['password_
 check( KAAE_MS_Login::enforce_login( $users[8] ) instanceof WP_Error, 'Cleared exception was resurrected.' );
 $options['kaae_ms_settings']['password_exception_user'] = 8;
 check( KAAE_MS_Login::enforce_login( $users[8] ) instanceof WP_Error, 'Legacy ID overrode the new empty list.' );
+
+// Staff blocking must win even inside a verified Microsoft authentication context.
+$options['kaae_ms_settings'] = $initial;
+$meta[7]['_kaae_ms_identity'] = $identity;
+$meta[7]['_kaae_ms_verified_login'] = hash( 'sha256', $tenant . ':' . $client . ':test-secret:' . $identity );
+$meta[7][KAAE_MS_Staff::BLOCKED] = $identity;
+$verified->setValue( null, 7 );
+check( KAAE_MS_Login::enforce_login( $user ) instanceof WP_Error, 'Microsoft authentication bypassed staff block.' );
+check( ! KAAE_MS_Login::application_passwords( true, $user ) && ! KAAE_MS_Login::allow_password_reset( true, 7 ), 'Blocked staff retained password/API/reset access.' );
+check( 0 === KAAE_MS_Staff::validate_session( 7 ), 'Blocked existing session was retained.' );
+unset( $meta[7][KAAE_MS_Staff::BLOCKED] );
+$options['kaae_ms_settings']['approved_staff_only'] = true;
+check( KAAE_MS_Login::enforce_login( $user ) instanceof WP_Error, 'Verified but unapproved staff bypassed approval policy.' );
+$state_key = 'kaae_ms_access_' . hash( 'sha256', $identity );
+$options[$state_key] = array( 'approved' => true );
+check( KAAE_MS_Login::enforce_login( $user ) === $user, 'Approved Microsoft identity could not authenticate.' );
+$options[$state_key]['blocked'] = true;
+check( KAAE_MS_Login::enforce_login( $user ) instanceof WP_Error, 'Saved identity block was ignored without user metadata.' );
+$verified->setValue( null, 0 );
+unset( $options[$state_key] );
+$options['kaae_ms_settings'] = $initial;
+$_POST = array( 'tenant' => $tenant, 'client' => $client, 'secret' => '', 'repository' => '', 'kaae_ms_staff_policy_present' => '1', 'approved_staff_only' => '1' );
+$before = $options;
+check( 'saved' !== save() && $before === $options, 'Administrator enabled approved-only mode before enrolling themself.' );
+$options[$state_key] = array( 'approved' => true );
+check( 'saved' === save() && $options['kaae_ms_settings']['approved_staff_only'], 'Approved/tested administrator could not enable approved-only mode.' );
+unset( $_POST['kaae_ms_staff_policy_present'], $_POST['approved_staff_only'] );
+check( 'saved' === save() && $options['kaae_ms_settings']['approved_staff_only'], 'An old settings tab silently disabled approved-only mode.' );
+$_POST['kaae_ms_staff_policy_present'] = '1';
+check( 'saved' === save() && ! $options['kaae_ms_settings']['approved_staff_only'], 'Administrator could not explicitly disable approved-only mode.' );
 echo $count . " policy checks passed.\n";
