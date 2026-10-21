@@ -2,7 +2,7 @@
 /**
  * Plugin Name: KAAE Microsoft Login
  * Description: KAAE Microsoft staff sign-in, automatic Subscriber accounts, and individual password policies.
- * Version: 0.3.1
+ * Version: 0.4.0
  * Requires at least: 6.0
  * Requires PHP: 8.1
  * Plugin URI: https://github.com/akamomer/kaae-microsoft-login

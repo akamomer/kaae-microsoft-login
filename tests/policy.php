@@ -109,7 +109,7 @@ check( ! KAAE_MS_Login::microsoft_only(), 'Disabled enforcement remained on.' );
 $users[8] = new WP_User( 8, 'external@example.test' );
 $users[9] = new WP_User( 9, 'other@example.test' );
 $options['kaae_ms_settings']['microsoft_only'] = true;
-$options['kaae_ms_settings']['password_exception_user'] = 8;
+$options['kaae_ms_settings']['password_exception_users'] = array( 8 );
 check( KAAE_MS_Login::enforce_login( $users[8] ) === $users[8], 'Selected external account could not use password.' );
 check( KAAE_MS_Login::enforce_login( $users[9] ) instanceof WP_Error, 'Unselected external account bypassed policy.' );
 check( KAAE_MS_Login::enforce_login( $user ) instanceof WP_Error, 'KAAE user bypassed policy.' );
@@ -154,10 +154,49 @@ check( empty( $meta[7][KAAE_MS_Accounts::PASSWORD_DISABLED] ), 'User could not c
 // Exception selection must resolve to an existing external user, not a domain rule.
 $_POST = array( 'tenant' => $tenant, 'client' => $client, 'secret' => '', 'repository' => '', 'password_exception_email' => 'external@example.test', 'automatic_accounts' => '1' );
 check( 'saved' === save(), 'Valid external account and automatic setting not saved.' );
-check( 8 === $options['kaae_ms_settings']['password_exception_user'], 'Exception was not bound to selected user ID.' );
+check( array( 8 ) === $options['kaae_ms_settings']['password_exception_users'], 'Legacy form was not saved as a user ID list.' );
 check( true === $options['kaae_ms_settings']['automatic_accounts'], 'Automatic accounts setting was lost.' );
 $_POST['password_exception_email'] = 'staff@kaae.org';
 check( 'saved' !== save(), 'KAAE email was accepted as external exception.' );
 $_POST['password_exception_email'] = 'missing@example.test';
 check( 'saved' !== save(), 'Missing user was accepted as external exception.' );
+
+// Upgrading immediately honors the old saved exception without any write.
+$options['kaae_ms_settings'] = array_merge( $initial, array( 'microsoft_only' => true, 'password_exception_user' => 8 ) );
+$before = $options;
+check( array( 8 ) === KAAE_MS_Login::settings()['password_exception_users'], 'Legacy saved exception was not normalized.' );
+check( KAAE_MS_Login::enforce_login( $users[8] ) === $users[8], 'Upgrade revoked existing external access.' );
+check( $before === $options, 'Reading legacy settings wrote to the database.' );
+
+// Multiple approved accounts work independently, while staff/unlisted users stay blocked.
+$_POST = array( 'tenant' => $tenant, 'client' => $client, 'secret' => '', 'repository' => '', 'microsoft_only' => '1', 'password_exception_emails' => "EXTERNAL@example.test\r\nother@example.test\nexternal@example.test\n" );
+check( 'saved' === save(), 'Multiple external exceptions could not be saved.' );
+check( array( 8, 9 ) === $options['kaae_ms_settings']['password_exception_users'], 'Emails were not deduplicated and bound to IDs.' );
+check( KAAE_MS_Login::enforce_login( $users[8] ) === $users[8] && KAAE_MS_Login::enforce_login( $users[9] ) === $users[9], 'One of the listed external accounts was blocked.' );
+$users[10] = new WP_User( 10, 'unlisted@example.test' );
+check( KAAE_MS_Login::enforce_login( $users[10] ) instanceof WP_Error && KAAE_MS_Login::enforce_login( $users[7] ) instanceof WP_Error, 'Unlisted external or staff account bypassed restrictions.' );
+check( ! KAAE_MS_Login::application_passwords( true, $users[9] ), 'Multiple exceptions enabled application passwords.' );
+$meta[9][KAAE_MS_Accounts::PASSWORD_DISABLED] = 1;
+check( KAAE_MS_Login::enforce_login( $users[9] ) instanceof WP_Error, 'List exception overrode personal password restriction.' );
+unset( $meta[9][KAAE_MS_Accounts::PASSWORD_DISABLED] );
+$before = $options;
+$_POST['password_exception_emails'] .= "staff@kaae.org\n";
+check( 'saved' !== save() && $before === $options, 'Invalid list entry partially changed saved access.' );
+$_POST['password_exception_emails'] = "external@example.test\nmissing@example.test";
+check( 'saved' !== save() && $before === $options, 'Unknown account partially changed saved access.' );
+$_POST['password_exception_emails'] = array( 'external@example.test' );
+check( 'saved' !== save() && $before === $options, 'Array form input was accepted.' );
+$_POST['password_exception_emails'] = '0';
+check( 'saved' !== save() && $before === $options, 'Invalid zero value silently cleared the list.' );
+
+$_POST['password_exception_emails'] = 'external@example.test';
+check( 'saved' === save(), 'Removing one exception failed.' );
+check( KAAE_MS_Login::enforce_login( $users[8] ) === $users[8] && KAAE_MS_Login::enforce_login( $users[9] ) instanceof WP_Error, 'Removed user retained password access or remaining user lost it.' );
+unset( $_POST['password_exception_emails'] );
+check( 'saved' === save() && array( 8 ) === $options['kaae_ms_settings']['password_exception_users'], 'Missing field unexpectedly cleared the list.' );
+$_POST['password_exception_emails'] = '';
+check( 'saved' === save() && array() === $options['kaae_ms_settings']['password_exception_users'], 'Explicit empty list did not remove all exceptions.' );
+check( KAAE_MS_Login::enforce_login( $users[8] ) instanceof WP_Error, 'Cleared exception was resurrected.' );
+$options['kaae_ms_settings']['password_exception_user'] = 8;
+check( KAAE_MS_Login::enforce_login( $users[8] ) instanceof WP_Error, 'Legacy ID overrode the new empty list.' );
 echo $count . " policy checks passed.\n";

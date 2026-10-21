@@ -37,7 +37,12 @@ final class KAAE_MS_Login {
                 $settings[ $name ] = constant( $constant );
             }
         }
-        return wp_parse_args( $settings, array( 'tenant' => '', 'client' => '', 'secret' => '', 'repository' => '', 'microsoft_only' => false, 'automatic_accounts' => false, 'password_exception_user' => 0 ) );
+        // Read legacy single-user settings without a database migration or login gap.
+        $ids = array_key_exists( 'password_exception_users', $settings )
+            ? ( is_array( $settings['password_exception_users'] ) ? $settings['password_exception_users'] : array() )
+            : array( $settings['password_exception_user'] ?? 0 );
+        $settings['password_exception_users'] = array_values( array_unique( array_filter( array_map( static fn( $id ) => is_int( $id ) || ( is_string( $id ) && ctype_digit( $id ) ) ? (int) $id : 0, $ids ), static fn( $id ) => $id > 0 ) ) );
+        return wp_parse_args( $settings, array( 'tenant' => '', 'client' => '', 'secret' => '', 'repository' => '', 'microsoft_only' => false, 'automatic_accounts' => false ) );
     }
 
     public static function microsoft_only(): bool {
@@ -66,7 +71,7 @@ final class KAAE_MS_Login {
         if ( ! self::microsoft_only() ) {
             return false;
         }
-        return (int) self::settings()['password_exception_user'] !== $user->ID || KAAE_MS_Accounts::kaae_email( $user->user_email );
+        return ! in_array( $user->ID, self::settings()['password_exception_users'], true ) || KAAE_MS_Accounts::kaae_email( $user->user_email );
     }
 
     public static function application_passwords( bool $available, $user = null ): bool {
@@ -103,8 +108,13 @@ final class KAAE_MS_Login {
     }
 
     private static function has_password_exception(): bool {
-        $user = get_userdata( (int) self::settings()['password_exception_user'] );
-        return $user instanceof WP_User && ! self::password_blocked( $user );
+        foreach ( self::settings()['password_exception_users'] as $id ) {
+            $user = get_userdata( $id );
+            if ( $user instanceof WP_User && ! self::password_blocked( $user ) ) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function save_personal_policy( int $user_id ): void {
@@ -156,7 +166,7 @@ final class KAAE_MS_Login {
             return;
         }
         $s = self::settings();
-        echo '<div class="wrap"><h1>KAAE Microsoft Login</h1><p>Manage Microsoft staff sign-in, automatic Subscriber accounts, and the external user’s password exception.</p>';
+        echo '<div class="wrap"><h1>KAAE Microsoft Login</h1><p>Manage Microsoft staff sign-in, automatic Subscriber accounts, and external users’ password exceptions.</p>';
         require_once __DIR__ . '/class-kaae-setup-guide.php';
         KAAE_MS_Setup_Guide::render( self::callback_url(), admin_url( 'profile.php' ) );
         echo '<h2>Configuration</h2><p>Complete the Microsoft steps above, then enter the three Microsoft values here.</p>';
@@ -178,11 +188,17 @@ final class KAAE_MS_Login {
         echo '<h3>Automatic KAAE staff accounts</h3><p><label><input type="checkbox" name="automatic_accounts" value="1" ' . checked( ! empty( $s['automatic_accounts'] ), true, false ) . '> Automatically connect existing KAAE users and create new staff as Subscribers</label></p>';
         echo '<p>Microsoft directory members with a verified directory sign-in address ending in @kaae.org can sign in directly. An existing WordPress user with that exact email keeps their role. A new user gets Subscriber only and has password sign-in disabled. An existing connection to a different Microsoft identity is never replaced automatically. Your Microsoft tenant administrators must control staff sign-in addresses and address reassignment.</p>';
         echo '<p>Before enabling, add <strong>Microsoft Graph → Delegated permissions → User.Read</strong> under the app’s API permissions and obtain consent according to KAAE policy. This reads only the signed-in user’s directory identity, membership type, and sign-in address. No mail or directory-wide permission is needed. <a href="https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0" target="_blank" rel="noopener noreferrer">Microsoft documentation</a>.</p>';
-        $exception = get_userdata( (int) $s['password_exception_user'] );
-        echo '<h3>External user password exception</h3><p><label for="kaae-ms-exception">Email of the existing external WordPress user</label><br><input id="kaae-ms-exception" type="email" class="regular-text" name="password_exception_email" value="' . esc_attr( $exception ? $exception->user_email : '' ) . '" placeholder="External user’s email"></p>';
-        echo '<p>Only this selected account may keep normal password login when Microsoft-only mode is enabled. The email must belong to an existing non-KAAE WordPress user. This does not create an account or change their role. Leave blank for no exception. Application passwords remain disabled in Microsoft-only mode.</p>';
+        $exception_emails = array();
+        foreach ( $s['password_exception_users'] as $id ) {
+            $exception = get_userdata( $id );
+            if ( $exception ) {
+                $exception_emails[] = $exception->user_email;
+            }
+        }
+        echo '<h3>External user password exceptions</h3><p><label for="kaae-ms-exception">Existing external WordPress users — one email per line</label><br><textarea id="kaae-ms-exception" class="large-text" name="password_exception_emails" rows="5" style="max-width:600px" aria-describedby="kaae-ms-exception-help">' . esc_html( implode( "\n", $exception_emails ) ) . '</textarea></p>';
+        echo '<p id="kaae-ms-exception-help">Only the listed accounts may keep normal password login when Microsoft-only mode is enabled. Every email must belong to an existing non-KAAE WordPress user. This does not create accounts or change roles. Your previously saved exception is included automatically. Add more emails on separate lines, or remove an email to revoke its exception after saving. Leave blank and save to remove all exceptions. Application passwords remain disabled in Microsoft-only mode.</p>';
         echo '<h3>Sign-in policy — enable after testing</h3><p><label><input type="checkbox" name="microsoft_only" value="1" ' . checked( ! empty( $s['microsoft_only'] ), true, false ) . '> Require Microsoft sign-in for all users</label></p>';
-        echo '<p>Applies to everyone except the selected external password account. Test your administrator’s Microsoft login first. Connect staff beforehand, or configure automatic KAAE accounts. Existing sessions remain signed in. With an external exception, the normal login form remains visible; password attempts by other users are still rejected. Without an exception, the login screen shows Microsoft only. Disconnecting is blocked while Microsoft-only mode or a personal password restriction applies.</p>';
+        echo '<p>Applies to everyone except the listed external password accounts. Test your administrator’s Microsoft login first. Connect staff beforehand, or configure automatic KAAE accounts. Existing sessions remain signed in. With an external exception, the normal login form remains visible; password attempts by other users are still rejected. Without an exception, the login screen shows Microsoft only. Disconnecting is blocked while Microsoft-only mode or a personal password restriction applies.</p>';
         echo '<p>Emergency recovery requires server access: temporarily define <code>KAAE_MS_PASSWORD_RECOVERY</code> as <code>true</code> in protected WordPress configuration, or deactivate this plugin. No recovery URL is provided.</p>';
         if ( defined( 'KAAE_MS_PASSWORD_RECOVERY' ) && true === KAAE_MS_PASSWORD_RECOVERY ) {
             echo '<p><strong>Server-side password recovery override is active. Microsoft-only mode is not being enforced.</strong></p>';
@@ -217,11 +233,16 @@ final class KAAE_MS_Login {
         if ( $s['automatic_accounts'] && is_multisite() ) {
             self::fail( 'Automatic staff accounts currently support separate WordPress installations, not multisite.' );
         }
-        $exception_email = trim( (string) wp_unslash( $_POST['password_exception_email'] ?? '' ) );
-        $s['password_exception_user'] = 0;
-        if ( '' !== $exception_email ) {
+        // Accept the previous form field too, for administrators with an old tab open.
+        $exception_input = $_POST['password_exception_emails'] ?? $_POST['password_exception_email'] ?? null;
+        if ( null !== $exception_input && ! is_string( $exception_input ) ) {
+            self::fail( 'Enter external users’ email addresses as text, one per line. No settings were saved.' );
+        }
+        $s['password_exception_users'] = null === $exception_input ? self::settings()['password_exception_users'] : array();
+        $emails = null === $exception_input ? array() : array_unique( array_filter( array_map( static fn( $email ) => strtolower( trim( $email ) ), preg_split( '/[\r\n,;]+/', wp_unslash( $exception_input ) ) ), static fn( $email ) => '' !== $email ) );
+        foreach ( $emails as $exception_email ) {
             if ( ! is_email( $exception_email ) || KAAE_MS_Accounts::kaae_email( $exception_email ) ) {
-                self::fail( 'The password exception must be an existing external user’s email, outside @kaae.org. No settings were saved.' );
+                self::fail( 'Every password exception must be an existing external user’s email, outside @kaae.org. No settings were saved.' );
             }
             $users = get_users( array( 'search' => $exception_email, 'search_columns' => array( 'user_email' ), 'number' => 2 ) );
             if ( count( $users ) !== 1 || strtolower( $users[0]->user_email ) !== strtolower( $exception_email ) || ! is_user_member_of_blog( $users[0]->ID ) ) {
@@ -230,8 +251,9 @@ final class KAAE_MS_Login {
             if ( get_user_meta( $users[0]->ID, KAAE_MS_Accounts::PASSWORD_DISABLED, true ) ) {
                 self::fail( 'This user has personally disabled password login. They must remove that preference before being selected as the external password exception.' );
             }
-            $s['password_exception_user'] = $users[0]->ID;
+            $s['password_exception_users'][] = $users[0]->ID;
         }
+        $s['password_exception_users'] = array_values( array_unique( $s['password_exception_users'] ) );
         if ( $s['microsoft_only'] ) {
             $effective = $s;
             foreach ( array( 'tenant', 'client', 'secret' ) as $name ) {
@@ -341,7 +363,7 @@ final class KAAE_MS_Login {
             self::button_styles();
             echo '<p style="margin:16px 0"><a class="kaae-ms-button" href="' . esc_url( add_query_arg( 'action', 'kaae_ms_start', site_url( 'wp-login.php', 'https' ) ) ) . '">' . self::microsoft_logo() . '<span>Sign in with Microsoft</span></a></p>';
             if ( self::microsoft_only() && self::has_password_exception() ) {
-                echo '<p style="margin:12px 0">KAAE staff: use Microsoft sign-in. Password login is reserved for the approved external account.</p>';
+                echo '<p style="margin:12px 0">KAAE staff: use Microsoft sign-in. Password login is reserved for approved external accounts.</p>';
             }
         }
     }

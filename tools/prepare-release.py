@@ -35,7 +35,7 @@ while remaining:
 notes = (
     f'KAAE Microsoft Login {version}\n\n'
     'Microsoft staff sign-in, automatic Subscriber onboarding, individual password preferences, '
-    'and an explicit external-account password exception.\n\n'
+    'and administrator-managed external-account password exceptions.\n\n'
     'Install the attached kaae-microsoft-login.zip through WordPress. Configure Microsoft settings '
     'separately on each site. Read the setup guide and test the sign-in paths before enabling new policies.\n\n'
     f'Source commit: {commit}\n'
