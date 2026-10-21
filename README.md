@@ -1,6 +1,12 @@
-# KAAE Microsoft Login — 0.5.0
+# KAAE Microsoft Login — 0.5.1
 
 One plugin for separate WordPress installations. Each site's users, settings and Microsoft connections remain independent. Development has not enabled the new onboarding/exception settings, granted Microsoft consent, or created production users.
+
+## v0.5.1: Fill missing staff names
+
+New staff accounts receive WordPress name fields as well as Display name. Directory enrollment uses Microsoft givenName and surname when available. If only a display name exists, the complete name goes into First name without guessing how to split it.
+
+To repair previously enrolled accounts: update the plugin, open **Users → KAAE Staff**, **Load directory from Microsoft** again, select the existing staff, choose **Sync names (fill missing)** and Apply. Existing nonempty first/last names and custom display names are preserved. Missing fields are filled; no scheduled sync or overwrite is performed. Sync names never creates accounts, changes approval/block decisions, roles, emails, links, passwords or sessions. External accounts outside the KAAE directory are not affected. No additional Microsoft permissions are required.
 
 ## v0.5.0: KAAE Staff directory and access management
 

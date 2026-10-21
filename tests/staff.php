@@ -4,7 +4,7 @@ if ( PHP_SAPI !== 'cli' ) { http_response_code( 404 ); exit; }
 define( 'ABSPATH', __DIR__ );
 define( 'MINUTE_IN_SECONDS', 60 );
 if ( 'recovery' === ( $argv[1] ?? '' ) ) { define( 'KAAE_MS_PASSWORD_RECOVERY', true ); }
-class WP_User { public function __construct( public int $ID, public string $user_email, public array $roles = array( 'subscriber' ) ) {} }
+class WP_User { public string $display_name = ""; public function __construct( public int $ID, public string $user_email, public array $roles = array( 'subscriber' ) ) {} }
 class WP_Error {}
 class StaffStop extends RuntimeException {}
 class KAAE_MS_Login { public static function settings(): array { return $GLOBALS['settings']; } }
@@ -66,7 +66,15 @@ function update_user_meta( $id, $key, $value ) { $GLOBALS['meta'][$id][$key] = $
 function delete_user_meta( $id, $key ) { unset( $GLOBALS['meta'][$id][$key] ); }
 function add_user_meta( $id, $key, $value, $unique ) { if ( isset( $GLOBALS['meta'][$id][$key] ) ) { return false; } $GLOBALS['meta'][$id][$key] = $value; return true; }
 function wp_generate_password( ...$args ) { return str_repeat( 'random', 11 ); }
-function wp_insert_user( $data ) { $id = count( $GLOBALS['users'] ) + 100; $GLOBALS['users'][$id] = new WP_User( $id, $data['user_email'], array( $data['role'] ) ); $GLOBALS['meta'][$id] = $data['meta_input']; return $id; }
+function wp_slash( $data ) { return $data; }
+function wp_update_user( $data ) {
+    if ( $GLOBALS['name_write_failure'] ?? false ) { return new WP_Error(); }
+    $GLOBALS['name_updates'][] = $data;
+    foreach ( array( 'first_name', 'last_name' ) as $key ) { if ( isset( $data[$key] ) ) { $GLOBALS['meta'][$data['ID']][$key] = $data[$key]; } }
+    if ( isset( $data['display_name'] ) ) { $GLOBALS['users'][$data['ID']]->display_name = $data['display_name']; }
+    return $data['ID'];
+}
+function wp_insert_user( $data ) { $id = count( $GLOBALS['users'] ) + 100; $GLOBALS['users'][$id] = new WP_User( $id, $data['user_email'], array( $data['role'] ) ); $GLOBALS['meta'][$id] = $data['meta_input'] + array_intersect_key( $data, array_flip( array( 'first_name', 'last_name' ) ) ); $GLOBALS['users'][$id]->display_name = $data['display_name']; return $id; }
 function check_admin_referer( $action ) { if ( ! $GLOBALS['nonce'] ) { throw new StaffStop( 'nonce' ); } }
 function wp_die( $message, ...$args ) { throw new StaffStop( $message ); }
 function wp_safe_redirect( $url ) { throw new StaffStop( 'redirect' ); }
@@ -83,7 +91,7 @@ $users[7] = new WP_User( 7, 'admin@kaae.org', array( 'administrator' ) );
 $meta[7][KAAE_MS_Accounts::IDENTITY] = $tenant . ':' . $id_admin;
 $users[8] = new WP_User( 8, 'ada@kaae.org', array( 'editor' ) );
 $row_a = array( 'id' => $id_a, 'email' => 'ada@kaae.org', 'name' => 'Ada', 'mail' => 'ada@kaae.org' );
-$row_b = array( 'id' => $id_b, 'email' => 'bea@kaae.org', 'name' => 'Bea', 'mail' => '' );
+$row_b = array( 'id' => $id_b, 'email' => 'bea@kaae.org', 'name' => 'Bea Example', 'first_name' => 'Bea', 'last_name' => 'Example', 'mail' => '' );
 $row_c = array( 'id' => $id_c, 'email' => 'cy@kaae.org', 'name' => 'Cy', 'mail' => '' );
 $row_admin = array( 'id' => $id_admin, 'email' => 'admin@kaae.org', 'name' => 'Admin', 'mail' => '' );
 $identity_a = $tenant . ':' . $id_a;
@@ -101,12 +109,13 @@ rejects( static fn() => KAAE_MS_Staff::load_directory( 'DO_NOT_PERSIST_THIS_TOKE
 check( ! $requests && ! $cache, 'Denied directory request accessed Graph/cache.' );
 $allowed = true;
 $responses = array(
-    array( 'status' => 200, 'body' => array( 'value' => array( array( 'id' => $id_a, 'displayName' => '<b>Ada</b>', 'mail' => 'ada@kaae.org', 'userPrincipalName' => 'ADA@KAAE.ORG' ), array( 'id' => $id_c, 'userPrincipalName' => 'outside@example.test' ) ), '@odata.nextLink' => 'https://graph.microsoft.com/v1.0/users?$skiptoken=next' ) ),
+    array( 'status' => 200, 'body' => array( 'value' => array( array( 'id' => $id_a, 'displayName' => '<b>Ada</b>', 'givenName' => 'Ada', 'surname' => '<b>Lovelace</b>', 'mail' => 'ada@kaae.org', 'userPrincipalName' => 'ADA@KAAE.ORG' ), array( 'id' => $id_c, 'userPrincipalName' => 'outside@example.test' ) ), '@odata.nextLink' => 'https://graph.microsoft.com/v1.0/users?$skiptoken=next' ) ),
     array( 'status' => 200, 'body' => array( 'value' => array( array( 'id' => $id_b, 'displayName' => 'Bea', 'userPrincipalName' => 'bea@kaae.org' ) ) ) ),
 );
 $before_users = $users;
 KAAE_MS_Staff::load_directory( 'DO_NOT_PERSIST_THIS_TOKEN' );
 $directory = KAAE_MS_Staff::directory();
+check( 'Ada' === $directory[$id_a]['first_name'] && 'Lovelace' === $directory[$id_a]['last_name'] && str_contains( $requests[0], 'givenName,surname' ), 'Directory name fields missing or unsanitized.' );
 check( 2 === count( $directory ) && 'Ada' === $directory[$id_a]['name'] && 'ada@kaae.org' === $directory[$id_a]['email'], 'Directory paging/filtering/sanitizing failed.' );
 check( $users === $before_users && ! $options && ! str_contains( serialize( $cache ), 'DO_NOT_PERSIST_THIS_TOKEN' ), 'Directory loading enrolled users or stored a token.' );
 check( in_array( 900, $ttl, true ), 'Directory snapshot is not limited to fifteen minutes.' );
@@ -126,11 +135,34 @@ rejects( static fn() => KAAE_MS_Staff::load_directory( 'DO_NOT_PERSIST_THIS_TOKE
 $responses = array( array( 'status' => 200, 'body' => array( 'value' => 'bad' ) ) );
 rejects( static fn() => KAAE_MS_Staff::load_directory( 'DO_NOT_PERSIST_THIS_TOKEN' ), 'Malformed directory was accepted.' );
 
+// Name-only repair must not enroll, approve, unblock or alter roles/sessions.
+$row_a['first_name'] = 'Ada'; $row_a['last_name'] = 'Lovelace';
+$before_options = $options; $before_meta = $meta; $before_destroyed = $destroyed;
+KAAE_MS_Staff::apply_action( 'sync_names', $row_a );
+check( 'Ada' === $meta[8]['first_name'] && 'Lovelace' === $meta[8]['last_name'] && 'Ada' === $users[8]->display_name, 'Existing names were not filled.' );
+check( $options === $before_options && $destroyed === $before_destroyed && empty( $meta[8][KAAE_MS_Accounts::IDENTITY] ) && array( 'editor' ) === $users[8]->roles, 'Name sync changed access, identity, sessions or role.' );
+$meta[8]['first_name'] = 'Personal'; $users[8]->display_name = 'Custom display';
+KAAE_MS_Staff::apply_action( 'sync_names', $row_a );
+check( 'Personal' === $meta[8]['first_name'] && 'Custom display' === $users[8]->display_name, 'Name sync overwrote personal names.' );
+$before_count = count( $users );
+rejects( static fn() => KAAE_MS_Staff::apply_action( 'sync_names', $row_c ), 'Name sync created an unenrolled account.' );
+check( $before_count === count( $users ), 'Name sync created a user.' );
+$meta[8]['first_name'] = ''; $meta[8]['last_name'] = '';
+KAAE_MS_Staff::apply_action( 'sync_names', array_replace( $row_a, array( 'first_name' => '', 'last_name' => '', 'name' => 'Full Unsplit Name' ) ) );
+check( 'Full Unsplit Name' === $meta[8]['first_name'] && '' === $meta[8]['last_name'], 'Display-name fallback guessed name boundaries.' );
+$meta[8]['first_name'] = ''; $name_write_failure = true;
+rejects( static fn() => KAAE_MS_Staff::apply_action( 'sync_names', $row_a ), 'Failed name save reported success.' );
+$name_write_failure = false;
+$edit_allowed = false;
+rejects( static fn() => KAAE_MS_Staff::apply_action( 'sync_names', $row_a ), 'Name sync ignored edit-user permission.' );
+$edit_allowed = true;
 KAAE_MS_Staff::apply_action( 'enroll', $row_a );
 check( array( 'editor' ) === $users[8]->roles && $identity_a === $meta[8][KAAE_MS_Accounts::IDENTITY] && KAAE_MS_Staff::approved( $identity_a ), 'Existing enrollment changed role or failed to approve.' );
 KAAE_MS_Staff::apply_action( 'enroll', $row_b );
 $new = KAAE_MS_Staff::matching_user( $row_b );
 check( $new && array( 'subscriber' ) === $new->roles && $meta[$new->ID][KAAE_MS_Accounts::PASSWORD_DISABLED], 'New enrollment was not a Microsoft-only Subscriber.' );
+check( 'Bea' === $meta[$new->ID]['first_name'], 'New enrollment omitted WordPress name fields.' );
+check( 'Example' === $meta[$new->ID]['last_name'], 'New enrollment lost Microsoft surname.' );
 $settings['approved_staff_only'] = true;
 check( KAAE_MS_Staff::user_allowed( $users[8] ) && ! KAAE_MS_Staff::user_allowed( $users[7] ), 'Approved-only policy did not distinguish enrolled staff.' );
 check( 0 === KAAE_MS_Staff::validate_session( 7 ), 'Unapproved existing session was not denied.' );
@@ -138,6 +170,9 @@ $users[9] = new WP_User( 9, 'external@example.test' );
 check( KAAE_MS_Staff::user_allowed( $users[9] ), 'Approved-only policy captured an external password user.' );
 rejects( static fn() => KAAE_MS_Staff::assert_identity_access( $tenant . ':' . $id_c ), 'Unapproved identity passed access gate.' );
 KAAE_MS_Staff::apply_action( 'block', $row_a );
+$before_options = $options; $before_destroyed = $destroyed;
+KAAE_MS_Staff::apply_action( 'sync_names', $row_a );
+check( $options === $before_options && $destroyed === $before_destroyed, 'Name sync changed a blocked account access decision or sessions.' );
 check( ! KAAE_MS_Staff::user_allowed( $users[8] ) && 0 === KAAE_MS_Staff::validate_session( 8 ) && in_array( 8, $destroyed, true ), 'Block did not deny access and destroy sessions.' );
 check( ! KAAE_MS_Staff::approved( $identity_a ) && true === KAAE_MS_Staff::state( $identity_a )['approved'], 'Block lost prior approval history.' );
 rejects( static fn() => KAAE_MS_Staff::assert_identity_access( $identity_a ), 'Blocked Microsoft identity passed gate.' );
@@ -193,5 +228,6 @@ check( ! KAAE_MS_Staff::user_allowed( $users[8] ), 'Bulk block did not apply.' )
 $before_requests = count( $requests );
 ob_start(); KAAE_MS_Staff::render(); $html = ob_get_clean();
 check( str_contains( $html, 'KAAE Staff' ) && str_contains( $html, 'staff_ids[]' ) && str_contains( $html, 'Blocked' ) && str_contains( $html, 'editor' ), 'Directory controls/status/roles were not rendered.' );
+check( str_contains( $html, 'value="sync_names"' ), 'Name-sync action was not available in the directory UI.' );
 check( count( $requests ) === $before_requests && ! str_contains( $html, 'DO_NOT_PERSIST_THIS_TOKEN' ), 'Rendering fetched Graph or exposed a token.' );
 echo $count . " offline staff directory/access checks passed.\n";

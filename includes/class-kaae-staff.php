@@ -79,7 +79,7 @@ final class KAAE_MS_Staff {
         if ( ! self::can_manage() || '' === $access_token ) {
             throw new KAAE_MS_Account_Error( 'Administrator directory access is required.' );
         }
-        $url = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName&$top=100';
+        $url = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,givenName,surname,mail,userPrincipalName&$top=100';
         $rows = array(); $seen = array();
         for ( $page = 0; $page < 50; ++$page ) {
             $parts = wp_parse_url( $url );
@@ -102,6 +102,8 @@ final class KAAE_MS_Staff {
                 if ( ! KAAE_MS_Accounts::kaae_email( $email ) ) { continue; }
                 $id = strtolower( $profile['id'] );
                 $row = array( 'id' => $id, 'email' => $email, 'name' => sanitize_text_field( is_string( $profile['displayName'] ?? null ) ? $profile['displayName'] : $email ), 'mail' => is_string( $profile['mail'] ?? null ) && is_email( $profile['mail'] ) ? $profile['mail'] : '' );
+                $row['first_name'] = sanitize_text_field( is_string( $profile['givenName'] ?? null ) ? $profile['givenName'] : '' );
+                $row['last_name'] = sanitize_text_field( is_string( $profile['surname'] ?? null ) ? $profile['surname'] : '' );
                 if ( isset( $rows[$id] ) && $rows[$id] !== $row ) { throw new KAAE_MS_Account_Error( 'The directory changed during loading. Please load it again.' ); }
                 $rows[$id] = $row;
                 if ( count( $rows ) > 5000 ) { throw new KAAE_MS_Account_Error( 'The directory exceeds this version’s 5,000-person limit.' ); }
@@ -142,7 +144,7 @@ final class KAAE_MS_Staff {
 
     /** Per-identity locks prevent enrollment overwriting a concurrent block. */
     public static function apply_action( string $action, array $row ): void {
-        if ( ! self::can_manage() || ! in_array( $action, array( 'enroll', 'block', 'unblock' ), true ) ) { throw new KAAE_MS_Account_Error( 'Administrator staff-management access is required.' ); }
+        if ( ! self::can_manage() || ! in_array( $action, array( 'enroll', 'sync_names', 'block', 'unblock' ), true ) ) { throw new KAAE_MS_Account_Error( 'Administrator staff-management access is required.' ); }
         $identity = KAAE_MS_Login::settings()['tenant'] . ':' . $row['id'];
         global $wpdb;
         $lock = 'kaae_ms_staff_' . substr( hash( 'sha256', $wpdb->users . ':' . $identity ), 0, 45 );
@@ -151,10 +153,16 @@ final class KAAE_MS_Staff {
             $state = self::state( $identity );
             $user = self::matching_user( $row );
             if ( $user && ! current_user_can( 'edit_user', $user->ID ) ) { throw new KAAE_MS_Account_Error( 'You cannot manage this WordPress account.' ); }
+            if ( 'sync_names' === $action ) {
+                if ( ! $user ) { throw new KAAE_MS_Account_Error( 'Enroll this person before syncing names. No account was created.' ); }
+                self::sync_names( $user, $row );
+                return; // Name repair never changes approval, blocking, links or roles.
+            }
             if ( 'block' === $action && ( ( $user && $user->ID === get_current_user_id() ) || get_user_meta( get_current_user_id(), KAAE_MS_Accounts::IDENTITY, true ) === $identity ) ) { throw new KAAE_MS_Account_Error( 'You cannot block your own administrator account.' ); }
             if ( 'enroll' === $action ) {
                 if ( ! empty( $state['blocked'] ) || ( $user && get_user_meta( $user->ID, self::BLOCKED, true ) ) ) { throw new KAAE_MS_Account_Error( 'Unblock this person before enrolling them.' ); }
-                $user = KAAE_MS_Accounts::resolve( $identity, $row['email'], $row['name'] );
+                $user = KAAE_MS_Accounts::resolve( $identity, $row['email'], $row['name'], array_filter( array( 'first_name' => $row['first_name'] ?? '', 'last_name' => $row['last_name'] ?? '' ) ) );
+                self::sync_names( $user, $row );
                 $state['approved'] = true;
             } elseif ( 'block' === $action ) {
                 $state['blocked'] = true;
@@ -178,13 +186,35 @@ final class KAAE_MS_Staff {
         }
     }
 
+    /** Fill missing profile names only; never replace an existing personal name. */
+    private static function sync_names( WP_User $user, array $row ): void {
+        $first = trim( (string) get_user_meta( $user->ID, 'first_name', true ) );
+        $last = trim( (string) get_user_meta( $user->ID, 'last_name', true ) );
+        $data = array( 'ID' => $user->ID );
+        foreach ( array( 'first_name' => $first, 'last_name' => $last ) as $field => $current ) {
+            $value = sanitize_text_field( $row[$field] ?? '' );
+            if ( '' === $current && '' !== trim( $value ) ) { $data[$field] = $value; }
+        }
+        $name = sanitize_text_field( $row['name'] ?? '' );
+        if ( '' !== trim( $name ) && ! is_email( $name ) ) {
+            if ( '' === $first && '' === $last && count( $data ) === 1 ) {
+                $data['first_name'] = $name; // Full-name fallback, with no cultural split assumptions.
+            }
+            $display = (string) ( $user->display_name ?? '' );
+            if ( '' === trim( $display ) || $display === $user->user_email || $display === ( $user->user_login ?? '' ) ) { $data['display_name'] = $name; }
+        }
+        if ( count( $data ) > 1 && is_wp_error( wp_update_user( wp_slash( $data ) ) ) ) {
+            throw new KAAE_MS_Account_Error( 'WordPress could not save the staff name. Please retry.' );
+        }
+    }
+
     public static function handle_action(): void {
         if ( ! self::can_manage() || 'POST' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) { wp_die( 'Administrator access is required.', '', array( 'response' => 403 ) ); return; }
         check_admin_referer( 'kaae_ms_staff_action' );
         $action = $_POST['staff_action'] ?? '';
         $ids = $_POST['staff_ids'] ?? array();
         $directory = self::directory();
-        if ( ! is_string( $action ) || ! in_array( $action, array( 'enroll', 'block', 'unblock' ), true ) || ! is_array( $ids ) || ! $ids || count( $ids ) > 50 ) { wp_die( 'Select between one and fifty staff members and choose an action.' ); return; }
+        if ( ! is_string( $action ) || ! in_array( $action, array( 'enroll', 'sync_names', 'block', 'unblock' ), true ) || ! is_array( $ids ) || ! $ids || count( $ids ) > 50 ) { wp_die( 'Select between one and fifty staff members and choose an action.' ); return; }
         foreach ( $ids as $id ) { if ( ! is_string( $id ) || ! isset( $directory[$id] ) ) { wp_die( 'The directory selection expired or is invalid. Load the directory again. No actions were performed.' ); return; } }
         $messages = array(); $done = 0;
         foreach ( array_unique( $ids ) as $id ) {
@@ -202,6 +232,7 @@ final class KAAE_MS_Staff {
         $directory = self::directory();
         $s = KAAE_MS_Login::settings();
         echo '<div class="wrap"><h1>KAAE Staff</h1><p>Select Microsoft directory staff to enroll, block or unblock on this WordPress site. Microsoft accounts are never modified.</p>';
+        echo '<p><strong>Sync names</strong> fills missing WordPress first/last names from Microsoft, preserving existing names. If Microsoft has only a full display name, it is kept intact in First name. Select existing staff and apply Sync names; this does not enroll or approve anyone.</p>';
         $notice = get_transient( self::cache_key() . '_notice' );
         if ( is_array( $notice ) ) {
             delete_transient( self::cache_key() . '_notice' );
@@ -222,7 +253,7 @@ final class KAAE_MS_Staff {
         echo '<form method="get" action="' . esc_url( admin_url( 'users.php' ) ) . '"><input type="hidden" name="page" value="kaae-ms-staff"><p><label for="kaae-staff-search">Search staff</label> <input id="kaae-staff-search" name="staff_search" value="' . esc_attr( $search ) . '"> <button class="button" type="submit">Search</button></p></form>';
         echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="kaae_ms_staff_action">';
         wp_nonce_field( 'kaae_ms_staff_action' );
-        echo '<p><label for="kaae-staff-action">Selected staff:</label> <select id="kaae-staff-action" name="staff_action"><option value="enroll">Enroll / approve</option><option value="block">Block access and end sessions</option><option value="unblock">Unblock access</option></select> <button class="button" type="submit">Apply</button></p>';
+        echo '<p><label for="kaae-staff-action">Selected staff:</label> <select id="kaae-staff-action" name="staff_action"><option value="enroll">Enroll / approve</option><option value="sync_names">Sync names (fill missing)</option><option value="block">Block access and end sessions</option><option value="unblock">Unblock access</option></select> <button class="button" type="submit">Apply</button></p>';
         echo '<table class="widefat striped"><thead><tr><td><input id="kaae-staff-all" type="checkbox" aria-label="Select all staff on this page"></td><th>Name</th><th>Microsoft sign-in email</th><th>Mailbox email</th><th>WordPress role</th><th>Access</th></tr></thead><tbody>';
         foreach ( array_slice( $rows, ( $page - 1 ) * 50, 50 ) as $row ) {
             $identity = $s['tenant'] . ':' . $row['id'];

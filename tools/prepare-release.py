@@ -51,6 +51,7 @@ if existing:
             raise SystemExit('Plugin code changed since this draft was built. Bump the version to publish a new package.')
 notes = (
     f'KAAE Microsoft Login {version}\n\n'
+    'Fills missing WordPress names during staff enrollment and adds a Sync names (fill missing) bulk action for existing staff. Reload the directory before syncing. Existing names, roles and access decisions are preserved. No new Microsoft permissions are required.\n\n'
     'Microsoft staff sign-in, automatic Subscriber onboarding, individual password preferences, '
     'and administrator-managed external-account password exceptions.\n\n'
     'Adds Users → KAAE Staff for administrator-delegated directory browsing, selected Subscriber enrollment, '

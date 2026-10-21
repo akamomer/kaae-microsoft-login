@@ -35,7 +35,7 @@ final class KAAE_MS_Accounts {
     }
 
     /** Match once by canonical directory UPN, then permanently use tenant:object ID. */
-    public static function resolve( string $identity, string $email, string $display_name ): WP_User {
+    public static function resolve( string $identity, string $email, string $display_name, array $names = array() ): WP_User {
         if ( is_multisite() || ! self::kaae_email( $email ) ) {
             throw new KAAE_MS_Account_Error( 'Automatic accounts require a standalone WordPress installation and a verified KAAE directory address.' );
         }
@@ -79,6 +79,10 @@ final class KAAE_MS_Accounts {
                 'user_pass' => wp_generate_password( 64, true, true ),
                 'user_email' => $email,
                 'display_name' => sanitize_text_field( $display_name ?: $email ),
+                // WordPress's Users table reads first/last name, not display_name.
+                // Keep the full name intact rather than guessing family-name boundaries.
+                'first_name' => sanitize_text_field( $names['first_name'] ?? ( empty( $names['last_name'] ) ? $display_name : '' ) ),
+                'last_name' => sanitize_text_field( $names['last_name'] ?? '' ),
                 'role' => 'subscriber', // Never inherit WordPress's configurable default role.
                 'meta_input' => array( self::IDENTITY => $identity, self::PASSWORD_DISABLED => 1 ),
             ) );
