@@ -1,4 +1,4 @@
-name: Test and prepare release
+name: Test and publish release
 
 on:
   push:
@@ -44,8 +44,8 @@ jobs:
       - name: Verify installable ZIP
         run: python3 tools/build-release.py --output-dir /tmp/kaae-ms-build
 
-  draft:
-    name: Prepare draft release for review
+  release:
+    name: Publish tested plugin release
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Build and prepare release
+      - name: Build and publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

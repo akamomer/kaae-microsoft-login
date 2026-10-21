@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a draft release in GitHub Actions; never publish or replace a release."""
+"""Publish the tested plugin version in GitHub Actions without replacing releases."""
 import argparse
 import json
 import os
@@ -26,12 +26,29 @@ result = subprocess.run(['gh', 'api', f'repos/{repository}/releases', '--paginat
 # gh --paginate emits one JSON array per page; parse each without relying on page size.
 decoder = json.JSONDecoder()
 remaining = result.stdout.strip()
+existing = None
 while remaining:
     page, end = decoder.raw_decode(remaining)
-    if any(release.get('tag_name') == tag for release in page):
-        print(f'Release {tag} already exists; leaving it unchanged. Bump the plugin version to prepare another release.')
-        raise SystemExit(0)
+    for release in page:
+        if release.get('tag_name') == tag:
+            existing = release
     remaining = remaining[end:].lstrip()
+if existing and not existing.get('draft', False):
+    print(f'Release {tag} is already published; leaving it unchanged. Bump the plugin version for another release.')
+    raise SystemExit(0)
+source_commit = commit
+if existing:
+    source_commit = existing.get('target_commitish', '')
+    if not re.fullmatch(r'[a-f0-9]{40}', source_commit):
+        raise SystemExit('The existing draft must target an immutable source commit')
+    if not any(asset.get('name') == 'kaae-microsoft-login.zip' and asset.get('state') == 'uploaded' and asset.get('size', 0) > 0 for asset in existing.get('assets', [])):
+        raise SystemExit('The existing draft is missing its complete plugin ZIP; refusing to publish')
+    if source_commit != commit:
+        comparison = subprocess.run(['gh', 'api', f'repos/{repository}/compare/{source_commit}...{commit}'], capture_output=True, text=True, check=True)
+        changes = json.loads(comparison.stdout)
+        automation_files = {'.github/workflows/release.yml', 'tools/prepare-release.py', 'tests/release.py', 'README.md'}
+        if changes.get('status') not in ('ahead', 'identical') or any(file['filename'] not in automation_files for file in changes.get('files', [])):
+            raise SystemExit('Plugin code changed since this draft was built. Bump the version to publish a new package.')
 notes = (
     f'KAAE Microsoft Login {version}\n\n'
     'Microsoft staff sign-in, automatic Subscriber onboarding, individual password preferences, '
@@ -40,16 +57,22 @@ notes = (
     'including report filters, while keeping the registered callback and profile-linking behavior unchanged.\n\n'
     'Install the attached kaae-microsoft-login.zip through WordPress. Configure Microsoft settings '
     'separately on each site. Read the setup guide and test the sign-in paths before enabling new policies.\n\n'
-    f'Source commit: {commit}\n'
-    f'Setup and validation: https://github.com/{repository}/blob/{commit}/README.md\n\n'
-    'This is a draft. Review it before publishing. WordPress update checks ignore draft releases.\n'
+    f'Source commit: {source_commit}\n'
+    f'Setup and validation: https://github.com/{repository}/blob/{source_commit}/README.md\n\n'
+    'Published after automated tests. Available through the plugin’s Check for updates and WordPress Updates.\n'
 )
 with tempfile.TemporaryDirectory(prefix='kaae-ms-notes-') as temporary:
     notes_path = Path(temporary) / 'notes.md'
     notes_path.write_text(notes)
+    if not existing:
+        # Upload the complete asset before making the release visible to WordPress.
+        subprocess.run([
+            'gh', 'release', 'create', tag, str(args.package.resolve()),
+            '--repo', repository, '--target', commit, '--draft',
+            '--title', f'KAAE Microsoft Login {version}', '--notes-file', str(notes_path),
+        ], check=True)
     subprocess.run([
-        'gh', 'release', 'create', tag, str(args.package.resolve()),
-        '--repo', repository, '--target', commit, '--draft',
-        '--title', f'KAAE Microsoft Login {version}', '--notes-file', str(notes_path),
+        'gh', 'release', 'edit', tag, '--repo', repository,
+        '--draft=false', '--prerelease=false', '--latest', '--notes-file', str(notes_path),
     ], check=True)
-print(f'Draft {tag} prepared. Publish it from GitHub Releases when approved.')
+print(f'Release {tag} published with its plugin ZIP. WordPress can now detect it.')
