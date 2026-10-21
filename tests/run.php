@@ -66,11 +66,14 @@ foreach ( array( implode( '.', $parts ), 'bad.token', str_repeat( 'a', 32769 ), 
 
 // Minimal in-memory WordPress doubles test updater decisions without DB/network.
 define( 'MINUTE_IN_SECONDS', 60 );
+define( 'DAY_IN_SECONDS', 86400 );
 class KAAE_MS_Login {
     public static function settings(): array { return array( 'repository' => 'example/kaae' ); }
 }
 function plugin_basename( $file ) { return 'kaae-microsoft-login/kaae-microsoft-login.php'; }
 function add_filter( ...$args ) {}
+function add_action( ...$args ) {}
+function set_transient( $key, $value, $ttl ) { $GLOBALS['statuses'][ $key ] = $value; }
 function get_transient( $key ) { return $GLOBALS['release']; }
 require dirname( __DIR__ ) . '/includes/class-kaae-updates.php';
 KAAE_MS_Updates::boot( 'test' );

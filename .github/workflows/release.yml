@@ -35,6 +35,7 @@ jobs:
           php tests/policy.php
           php tests/policy.php recovery
           php tests/accounts.php
+          php tests/updates.php
           python3 tests/release.py
           for scenario in existing new manual guest wrong-tenant wrong-nonce conflicting; do
             php tests/callback.php "$scenario"

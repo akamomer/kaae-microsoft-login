@@ -167,6 +167,7 @@ final class KAAE_MS_Login {
         }
         $s = self::settings();
         echo '<div class="wrap"><h1>KAAE Microsoft Login</h1><p>Manage Microsoft staff sign-in, automatic Subscriber accounts, and external users’ password exceptions.</p>';
+        KAAE_MS_Updates::render();
         require_once __DIR__ . '/class-kaae-setup-guide.php';
         KAAE_MS_Setup_Guide::render( self::callback_url(), admin_url( 'profile.php' ) );
         echo '<h2>Configuration</h2><p>Complete the Microsoft steps above, then enter the three Microsoft values here.</p>';
@@ -175,7 +176,7 @@ final class KAAE_MS_Login {
         foreach ( array( 'tenant' => 'Microsoft tenant ID', 'client' => 'Application client ID', 'secret' => 'Client secret', 'repository' => 'Public GitHub repository (owner/repository)' ) as $name => $label ) {
             $locked = defined( 'KAAE_MS_' . strtoupper( $name ) );
             if ( 'repository' === $name ) {
-                echo '<h3>GitHub updates (optional)</h3><p>You can leave this blank while configuring Microsoft sign-in.</p>';
+                echo '<h3>GitHub repository (optional override)</h3><p>Updates use the official akamomer/kaae-microsoft-login repository automatically. Leave blank unless you maintain a different repository.</p>';
             }
             echo '<p><label for="kaae-ms-' . esc_attr( $name ) . '">' . esc_html( $label ) . '</label><br><input id="kaae-ms-' . esc_attr( $name ) . '" class="regular-text" name="' . esc_attr( $name ) . '" type="' . ( 'secret' === $name ? 'password' : 'text' ) . '" value="' . esc_attr( 'secret' === $name ? '' : $s[ $name ] ) . '" autocomplete="off" ' . ( $locked ? 'disabled' : '' ) . '></p>';
             if ( $locked ) {
@@ -277,6 +278,7 @@ final class KAAE_MS_Login {
         }
         update_option( self::OPTION, $s, false );
         delete_transient( 'kaae_ms_release' );
+        delete_transient( 'kaae_ms_update_status' );
         wp_safe_redirect( admin_url( 'options-general.php?page=kaae-ms' ) );
         exit;
     }
