@@ -1,0 +1,63 @@
+name: Test and prepare release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Offline authentication and packaging checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check PHP runtime and syntax
+        run: |
+          php --version
+          php -r 'if (version_compare(PHP_VERSION, "8.1", "<") || !extension_loaded("openssl")) { exit(1); }'
+          find . -name '*.php' -print0 | xargs -0 -n 1 php -l
+      - name: Run offline authentication tests
+        run: |
+          php tests/run.php
+          php tests/policy.php
+          php tests/policy.php recovery
+          php tests/accounts.php
+          python3 tests/release.py
+          for scenario in existing new manual guest wrong-tenant wrong-nonce conflicting; do
+            php tests/callback.php "$scenario"
+          done
+      - name: Verify installable ZIP
+        run: python3 tools/build-release.py --output-dir /tmp/kaae-ms-build
+
+  draft:
+    name: Prepare draft release for review
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build and prepare release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/build-release.py --output-dir /tmp/kaae-ms-release
+          python3 tools/prepare-release.py --package /tmp/kaae-ms-release/kaae-microsoft-login.zip
