@@ -5,8 +5,8 @@ defined( 'ABSPATH' ) || exit;
 final class KAAE_MS_Setup_Guide {
     public static function render( string $callback, string $profile_url ): void {
         ?>
-        <div class="postbox" style="max-width:960px;margin-top:20px;padding:8px 24px 20px;box-sizing:border-box">
-            <h2>Microsoft setup — start here</h2>
+        <details class="postbox" style="max-width:960px;margin-top:20px;padding:16px 24px;box-sizing:border-box">
+            <summary style="cursor:pointer;font-size:16px;font-weight:600;line-height:1.5">Microsoft setup — start here</summary>
             <p>Complete these steps using KAAE’s Microsoft organization account. You need permission to register an application in your organization’s Microsoft Entra directory. If registration is unavailable, ask your Microsoft 365 administrator to complete steps 1–4.</p>
             <p><strong>During initial setup, leave “Require Microsoft sign-in for all users” off until your administrator’s Microsoft login works.</strong> If it is already enforced, keep your current administrator session open while changing onboarding settings and testing the external-user exception.</p>
             <ol style="margin-left:24px">
@@ -84,7 +84,7 @@ final class KAAE_MS_Setup_Guide {
                 <a href="https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-redirect-uri" target="_blank" rel="noopener noreferrer">Add a redirect URI</a> ·
                 <a href="https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc" target="_blank" rel="noopener noreferrer">Sign-in permissions</a>
             </p>
-        </div>
+        </details>
         <?php
     }
 }

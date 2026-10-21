@@ -1,4 +1,4 @@
-# KAAE Microsoft Login — 0.3.0
+# KAAE Microsoft Login — 0.3.1
 
 One plugin for separate WordPress installations. Each site's users, settings and Microsoft connections remain independent. Development has not enabled the new onboarding/exception settings, granted Microsoft consent, or created production users.
 
@@ -16,7 +16,7 @@ One plugin for separate WordPress installations. Each site's users, settings and
 
 ## Microsoft setup
 
-Settings → KAAE Microsoft Login contains a six-step guide and the exact redirect URI for the current installation.
+Settings → KAAE Microsoft Login contains a six-step guide and the exact redirect URI for the current installation. The guide is collapsed by default; click “Microsoft setup — start here” to expand it. It uses the browser's native details control, which also supports keyboard activation without JavaScript.
 
 1. Register a **single-tenant** application in KAAE's Microsoft Entra workforce directory. Add **Web** redirect URIs copied from each site's plugin settings. Typical standard URLs are `https://kaae.org/wp-login.php?action=kaae_ms_callback` and `https://form.kaae.org/wp-login.php?action=kaae_ms_callback`; canonical www prefixes or installation paths can change these, so use the displayed values.
 2. Copy Directory (tenant) ID, Application (client) ID and a client-secret **Value**, not Secret ID. Keep secrets outside source control/chat. The same app can contain both Web redirect URIs; each WordPress site is configured separately. Do not enable implicit grant or public client flows for this server-side flow.
